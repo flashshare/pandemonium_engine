@@ -95,6 +95,9 @@ public:
 	bool get_is_terrain_generated() const;
 	void set_is_terrain_generated(const bool value);
 
+	bool get_is_setup() const;
+	void set_is_setup(const bool value);
+
 	bool is_build_aborted() const;
 
 	bool is_in_tree() const;
@@ -248,7 +251,7 @@ public:
 	void voxel_structures_set(const Vector<Variant> &structures);
 
 	//Scenes
-	void scene_add(const Ref<PackedScene> &p_scene, const Transform &p_transform = Transform(), const Node *p_node = NULL, const bool p_original = true);
+	void scene_add(const Ref<PackedScene> &p_scene, const Transform &p_transform = Transform(), const Node *p_node = NULL, const bool p_original = true, const String &p_name = String());
 
 	Ref<PackedScene> scene_get(const int index);
 	void scene_set(const int index, const Ref<PackedScene> &p_scene);
@@ -258,6 +261,9 @@ public:
 
 	bool scene_get_is_original(const int index);
 	void scene_set_is_original(const int index, const bool p_original);
+
+	String scene_get_name(const int index);
+	void scene_set_name(const int index, const String &p_name);
 
 	Node *scene_get_node(const int index);
 	void scene_set_node(const int index, const Node *p_node);
@@ -289,7 +295,7 @@ public:
 	void clear_baked_lights();
 
 #ifdef MODULE_PROPS_ENABLED
-	void prop_add(const Transform &transform, const Ref<PropData> &prop, const bool p_original = true);
+	void prop_add(const Transform &transform, const Ref<PropData> &prop, const bool p_original = true, const String &p_name = String());
 
 	Ref<PropData> prop_get(const int index);
 	void prop_set(const int index, const Ref<PropData> &p_prop);
@@ -300,6 +306,9 @@ public:
 	bool prop_get_is_original(const int index);
 	void prop_set_is_original(const int index, const bool p_original);
 
+	String prop_get_name(const int index);
+	void prop_set_name(const int index, const String &p_name);
+
 	int prop_get_count() const;
 	void prop_remove(const int index);
 	void props_clear();
@@ -309,8 +318,9 @@ public:
 #endif
 
 #ifdef MODULE_MESH_DATA_RESOURCE_ENABLED
-	int mesh_data_resource_addv(const Vector3 &local_data_pos, const Ref<MeshDataResource> &mesh, const Ref<Texture> &texture = Ref<Texture>(), const Color &color = Color(1, 1, 1, 1), const bool apply_voxel_scale = true, const bool p_original = true);
-	int mesh_data_resource_add(const Transform &local_transform, const Ref<MeshDataResource> &mesh, const Ref<Texture> &texture = Ref<Texture>(), const Color &color = Color(1, 1, 1, 1), const bool apply_voxel_scale = true, const bool p_original = true);
+	int mesh_data_resource_addv(const Vector3 &local_data_pos, const Ref<MeshDataResource> &mesh, const Ref<Texture> &texture = Ref<Texture>(), const Color &color = Color(1, 1, 1, 1), const bool apply_voxel_scale = true, const bool p_original = true, const String &p_name = String());
+	int mesh_data_resource_add(const Transform &local_transform, const Ref<MeshDataResource> &mesh, const Ref<Texture> &texture = Ref<Texture>(), const Color &color = Color(1, 1, 1, 1), const bool apply_voxel_scale = true, const bool p_original = true, const String &p_name = String());
+	int mesh_data_resource_add_material(const Transform &local_transform, const Ref<MeshDataResource> &mesh, const Ref<Texture> &texture = Ref<Texture>(), const Ref<Material> &p_material = Ref<Texture>(), const bool apply_voxel_scale = true, const bool p_original = true, const String &p_name = String());
 
 	Ref<MeshDataResource> mesh_data_resource_get(const int index);
 	void mesh_data_resource_set(const int index, const Ref<MeshDataResource> &mesh);
@@ -332,6 +342,12 @@ public:
 
 	bool mesh_data_resource_get_is_original(const int index);
 	void mesh_data_resource_set_is_original(const int index, const bool p_original);
+
+	String mesh_data_resource_get_name(const int index);
+	void mesh_data_resource_set_name(const int index, const String &p_name);
+
+	Ref<Material> mesh_data_resource_get_material(const int index);
+	void mesh_data_resource_set_material(const int index, const Ref<Material> &p_material);
 
 	int mesh_data_resource_get_count() const;
 	void mesh_data_resource_remove(const int index);
@@ -392,6 +408,7 @@ protected:
 
 protected:
 	struct SceneDataStore {
+		String name;
 		bool original;
 		Transform transform;
 		Ref<PackedScene> scene;
@@ -400,6 +417,7 @@ protected:
 
 #ifdef MODULE_PROPS_ENABLED
 	struct PropDataStore {
+		String name;
 		bool original;
 		Transform transform;
 		Ref<PropData> prop;
@@ -408,6 +426,7 @@ protected:
 
 #ifdef MODULE_MESH_DATA_RESOURCE_ENABLED
 	struct MeshDataResourceEntry {
+		String name;
 		Ref<MeshDataResource> mesh;
 		Ref<Texture> texture;
 		Color color;
@@ -415,6 +434,7 @@ protected:
 		Transform transform;
 		bool is_inside;
 		bool is_original;
+		Ref<Material> material;
 	};
 #endif
 
@@ -505,6 +525,8 @@ protected:
 
 	bool _abort_build;
 	bool _queued_generation;
+
+	bool _is_setup;
 };
 
 #endif

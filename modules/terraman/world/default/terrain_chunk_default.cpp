@@ -49,6 +49,10 @@
 #include "../jobs/terrain_terrain_job.h"
 #include "scene/resources/world_3d.h"
 
+#ifdef MODULE_VERTEX_LIGHTS_3D_ENABLED
+#include "modules/vertex_lights_3d/vertex_lights_3d_server.h"
+#endif
+
 const String TerrainChunkDefault::BINDING_STRING_BUILD_FLAGS = "Use Isolevel,Use Lighting,Use AO,Use RAO,Generate AO,Generate RAO,Bake Lights,Create Collider,Create Lods";
 
 _FORCE_INLINE_ int TerrainChunkDefault::get_build_flags() const {
@@ -78,32 +82,38 @@ int TerrainChunkDefault::get_current_lod_level() const {
 void TerrainChunkDefault::set_current_lod_level(const int value) {
 	_current_lod_level = value;
 
-	if ((_build_flags & BUILD_FLAG_CREATE_LODS) == 0)
+	if ((_build_flags & BUILD_FLAG_CREATE_LODS) == 0) {
 		return;
+	}
 
-	if (_current_lod_level < 0)
+	if (_current_lod_level < 0) {
 		_current_lod_level = 0;
+	}
 
 	int lod_num = mesh_rid_get_count(MESH_INDEX_TERRAIN, MESH_TYPE_INDEX_MESH_INSTANCE);
 
-	if (_current_lod_level > lod_num)
+	if (_current_lod_level > lod_num) {
 		_current_lod_level = lod_num;
+	}
 
 	for (int i = 0; i < lod_num; ++i) {
 		bool vis = false;
 
-		if (i == _current_lod_level)
+		if (i == _current_lod_level) {
 			vis = true;
+		}
 
 		RID rid = mesh_rid_get_index(MESH_INDEX_TERRAIN, MESH_TYPE_INDEX_MESH_INSTANCE, i);
 
-		if (rid != RID())
+		if (rid != RID()) {
 			RenderingServer::get_singleton()->instance_set_visible(rid, vis);
+		}
 
 		rid = mesh_rid_get_index(MESH_INDEX_PROP, MESH_TYPE_INDEX_MESH_INSTANCE, i);
 
-		if (rid != RID())
+		if (rid != RID()) {
 			RenderingServer::get_singleton()->instance_set_visible(rid, vis);
+		}
 	}
 }
 
@@ -709,7 +719,24 @@ void TerrainChunkDefault::draw_debug_mdr_colliders() {
 
 void TerrainChunkDefault::_visibility_changed(bool visible) {
 	if (visible) {
-		set_current_lod_level(_current_lod_level);
+		if ((_build_flags & BUILD_FLAG_CREATE_LODS) == 0) {
+			RID rid = mesh_rid_get_index(MESH_INDEX_TERRAIN, MESH_TYPE_INDEX_MESH_INSTANCE, 0);
+
+			if (rid != RID()) {
+				RenderingServer::get_singleton()->instance_set_visible(rid, true);
+			}
+
+			rid = mesh_rid_get_index(MESH_INDEX_PROP, MESH_TYPE_INDEX_MESH_INSTANCE, 0);
+
+			if (rid != RID()) {
+				RenderingServer::get_singleton()->instance_set_visible(rid, true);
+			}
+
+			return;
+		} else {
+			set_current_lod_level(_current_lod_level);
+		}
+
 		return;
 	}
 
@@ -718,18 +745,21 @@ void TerrainChunkDefault::_visibility_changed(bool visible) {
 	for (int i = 0; i < lod_num; ++i) {
 		RID rid = mesh_rid_get_index(MESH_INDEX_TERRAIN, MESH_TYPE_INDEX_MESH_INSTANCE, i);
 
-		if (rid != RID())
+		if (rid != RID()) {
 			RenderingServer::get_singleton()->instance_set_visible(rid, false);
+		}
 
 		rid = mesh_rid_get_index(MESH_INDEX_LIQUID, MESH_TYPE_INDEX_MESH_INSTANCE, i);
 
-		if (rid != RID())
+		if (rid != RID()) {
 			RenderingServer::get_singleton()->instance_set_visible(rid, false);
+		}
 
 		rid = mesh_rid_get_index(MESH_INDEX_PROP, MESH_TYPE_INDEX_MESH_INSTANCE, i);
 
-		if (rid != RID())
+		if (rid != RID()) {
 			RenderingServer::get_singleton()->instance_set_visible(rid, false);
+		}
 	}
 }
 
@@ -752,9 +782,63 @@ void TerrainChunkDefault::_world_transform_changed() {
 void TerrainChunkDefault::_bake_lights() {
 	clear_baked_lights();
 
+#ifdef MODULE_VERTEX_LIGHTS_3D_ENABLED
+	TerrainWorld *world = get_voxel_world();
+
+	if (world && world->get_use_vertex_lights_3d()) {
+		VertexLights3DServer *vls = VertexLights3DServer::get_singleton();
+		RID map = world->get_world_3d()->get_vertex_lights_3d_map();
+
+		uint8_t *channel_isolevel = channel_get(TerrainChunkDefault::DEFAULT_CHANNEL_ISOLEVEL);
+
+		if (!channel_isolevel) {
+			return;
+		}
+
+		uint8_t *channel_color_r = channel_get(TerrainChunkDefault::DEFAULT_CHANNEL_LIGHT_COLOR_R);
+		uint8_t *channel_color_g = channel_get(TerrainChunkDefault::DEFAULT_CHANNEL_LIGHT_COLOR_G);
+		uint8_t *channel_color_b = channel_get(TerrainChunkDefault::DEFAULT_CHANNEL_LIGHT_COLOR_B);
+
+		ERR_FAIL_COND(channel_color_r == NULL || channel_color_g == NULL || channel_color_b == NULL);
+
+		int64_t dsx = static_cast<int64_t>(_data_size_x);
+		int64_t dsz = static_cast<int64_t>(_data_size_z);
+		Vector2i chunk_world_data_position = Vector2i(_position_x * _size_x, _position_z * _size_z);
+
+		for (int x = 0; x < dsx; ++x) {
+			for (int z = 0; z < dsz; ++z) {
+				int index = get_data_index(x, z);
+
+				Vector2i world_data_pos = Vector2i(
+						chunk_world_data_position.x + x, // - _margin_start  Shouldn't this be required?
+						chunk_world_data_position.y + z); // - _margin_start
+
+				Vector3 current_world_position = world->world_data_position_to_world_position(world_data_pos);
+
+				current_world_position.y = (float)channel_isolevel[index] / 255.0 * _world_height * _voxel_scale;
+
+				Color color = vls->sample_light_value(map, current_world_position);
+
+				int r = color.r * 255.0;
+				int g = color.g * 255.0;
+				int b = color.b * 255.0;
+
+				channel_color_r[index] = r;
+				channel_color_g[index] = g;
+				channel_color_b[index] = b;
+			}
+		}
+
+	} else {
+		for (int i = 0; i < _lights.size(); ++i) {
+			bake_light(_lights.get(i));
+		}
+	}
+#else
 	for (int i = 0; i < _lights.size(); ++i) {
 		bake_light(_lights.get(i));
 	}
+#endif
 }
 void TerrainChunkDefault::_bake_light(Ref<TerrainLight> light) {
 	ERR_FAIL_COND(!light.is_valid());

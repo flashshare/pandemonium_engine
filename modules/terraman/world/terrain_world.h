@@ -54,6 +54,8 @@
 class TerrainStructure;
 class TerrainChunk;
 class PropData;
+class MeshDataResource;
+class TerrainWorldChunkDataManager;
 
 class TerrainWorld : public Spatial {
 	GDCLASS(TerrainWorld, Spatial);
@@ -107,8 +109,16 @@ public:
 	Ref<TerrainLevelGenerator> get_level_generator() const;
 	void set_level_generator(const Ref<TerrainLevelGenerator> &level_generator);
 
+	Ref<TerrainWorldChunkDataManager> get_world_chunk_data_manager() const;
+	void set_world_chunk_data_manager(const Ref<TerrainWorldChunkDataManager> &p_data_manager);
+
 	float get_voxel_scale() const;
 	void set_voxel_scale(const float value);
+
+#ifdef MODULE_VERTEX_LIGHTS_3D_ENABLED
+	bool get_use_vertex_lights_3d() const;
+	void set_use_vertex_lights_3d(const bool value);
+#endif
 
 	int get_chunk_spawn_range() const;
 	void set_chunk_spawn_range(const int value);
@@ -152,10 +162,14 @@ public:
 	void chunks_clear();
 
 	Ref<TerrainChunk> chunk_get_or_create(const int x, const int z);
+	Ref<TerrainChunk> chunk_get_or_load(const int x, const int z);
+	Ref<TerrainChunk> chunk_load(const int x, const int z);
 	Ref<TerrainChunk> chunk_create(const int x, const int z);
 	void chunk_setup(Ref<TerrainChunk> chunk);
 
 	void chunk_generate(Ref<TerrainChunk> chunk);
+
+	void force_save_all_chunks();
 
 	Vector<Variant> chunks_get();
 	void chunks_set(const Vector<Variant> &chunks);
@@ -175,10 +189,15 @@ public:
 	void generation_remove_index(const int index);
 	int generation_get_size() const;
 
-	void scene_add(const Ref<PackedScene> &p_scene, const Transform &p_transform = Transform(), const Node *p_node = NULL, const bool p_original = true);
+	void scene_add(const Ref<PackedScene> &p_scene, const Transform &p_transform = Transform(), const Node *p_node = NULL, const bool p_original = true, const String &p_name = String());
 
 #ifdef MODULE_PROPS_ENABLED
-	void prop_add(Transform transform, const Ref<PropData> &prop, const bool apply_voxel_scale = true, const bool p_original = true);
+	void prop_add(Transform transform, const Ref<PropData> &prop, const bool apply_voxel_scale = true, const bool p_original = true, const String &p_name = String());
+#endif
+
+#ifdef MODULE_MESH_DATA_RESOURCE_ENABLED
+	void mesh_data_resource_add(const Ref<MeshDataResource> &p_mesh, const Transform &p_transform, const Ref<Texture> &p_texture = Ref<Texture>(), const Color &p_color = Color(1, 1, 1, 1), const bool p_original = true, const String &p_name = String());
+	void mesh_data_resource_add_material(const Ref<MeshDataResource> &p_mesh, const Transform &p_transform, const Ref<Texture> &p_texture = Ref<Texture>(), const Ref<Material> &p_material = Ref<Material>(), const bool p_original = true, const String &p_name = String());
 #endif
 
 	//Lights
@@ -199,6 +218,10 @@ public:
 	Vector2i world_data_position_to_chunk_position(const Vector2i &p_world_data_position);
 
 	Vector2i world_position_to_world_data_position(const Vector3 &world_position);
+	Vector3i world_position_to_world_data_position_3d(const Vector3 &world_position);
+	Vector3 world_data_position_to_world_position(const Vector2i &p_position);
+	Vector3 world_data_position_to_world_position_3d(const Vector3i &p_position);
+
 	uint8_t get_voxel_at_world_data_position(const Vector2i &world_data_position, const int channel_index);
 	void set_voxel_at_world_data_position(const Vector2i &world_data_position, const uint8_t data, const int channel_index, const bool p_immediate_build = true, const bool allow_creating_chunks = true);
 	Ref<TerrainChunk> get_chunk_at_world_data_position(const Vector2i &world_data_position);
@@ -215,10 +238,18 @@ public:
 protected:
 	virtual void _generate_chunk(Ref<TerrainChunk> chunk);
 	virtual Ref<TerrainChunk> _create_chunk(int x, int z, Ref<TerrainChunk> p_chunk);
+	virtual void _setup_chunk(Ref<TerrainChunk> p_chunk);
 	virtual int _get_channel_index_info(const ChannelTypeInfo channel_type);
 
+	void _editor_button_property_pressed(const StringName &p_property);
+	void _get_property_list(List<PropertyInfo> *p_list) const;
+	virtual void _validate_property(PropertyInfo &property) const;
 	virtual void _notification(int p_what);
 	static void _bind_methods();
+
+#ifdef MODULE_VERTEX_LIGHTS_3D_ENABLED
+	void _on_vertex_lights_3d_map_changed(RID p_map);
+#endif
 
 public:
 	struct IntPos {
@@ -261,9 +292,13 @@ private:
 	int _data_margin_start;
 	int _data_margin_end;
 	float _world_height;
+#ifdef MODULE_VERTEX_LIGHTS_3D_ENABLED
+	bool _use_vertex_lights_3d;
+#endif
 
 	Ref<TerrainLibrary> _library;
 	Ref<TerrainLevelGenerator> _level_generator;
+	Ref<TerrainWorldChunkDataManager> _world_chunk_data_manager;
 	float _voxel_scale;
 	int _chunk_spawn_range;
 

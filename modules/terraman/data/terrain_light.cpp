@@ -114,6 +114,29 @@ void TerrainLight::set_specular(const real_t value) {
 	_specular = value;
 }
 
+TerrainLight::LightMode TerrainLight::get_light_mode() const {
+	return _light_mode;
+}
+void TerrainLight::set_light_mode(const LightMode value) {
+	_light_mode = value;
+}
+
+int TerrainLight::get_item_cull_mask() {
+	return _item_cull_mask;
+}
+void TerrainLight::set_item_cull_mask(const int p_item_cull_mask) {
+	_item_cull_mask = p_item_cull_mask;
+}
+
+#ifdef MODULE_VERTEX_LIGHTS_3D_ENABLED
+RID TerrainLight::get_vertex_lights_3d_rid() const {
+	return _vertex_lights_3d_rid;
+}
+void TerrainLight::set_vertex_lights_3d_rid(const RID p_rid) {
+	_vertex_lights_3d_rid = p_rid;
+}
+#endif
+
 Dictionary TerrainLight::to_dict() {
 	Dictionary data;
 
@@ -132,6 +155,10 @@ Dictionary TerrainLight::to_dict() {
 	data["negative"] = _negative;
 	data["specular"] = _specular;
 
+	data["light_mode"] = (int)_light_mode;
+
+	data["item_cull_mask"] = _item_cull_mask;
+
 	return data;
 }
 void TerrainLight::from_dict(const Dictionary &p_data) {
@@ -149,6 +176,10 @@ void TerrainLight::from_dict(const Dictionary &p_data) {
 	_indirect_energy = p_data["indirect_energy"];
 	_negative = p_data["negative"];
 	_specular = p_data["specular"];
+
+	_light_mode = (LightMode)((int)p_data["light_mode"]);
+
+	_item_cull_mask = p_data["item_cull_mask"];
 }
 
 TerrainLight::TerrainLight() {
@@ -160,6 +191,8 @@ TerrainLight::TerrainLight() {
 	_indirect_energy = 0;
 	_negative = false;
 	_specular = 0;
+	_light_mode = LIGHT_MODE_ADD;
+	_item_cull_mask = 1;
 }
 
 TerrainLight::~TerrainLight() {
@@ -175,9 +208,6 @@ void TerrainLight::_bind_methods() {
 
 #ifdef MODULE_PROPS_ENABLED
 	owner_type_hint += ",Prop";
-#endif
-#ifdef MODULE_VERTEX_LIGHTS_3D_ENABLED
-	owner_type_hint += ",Vertex Light 3D";
 #endif
 
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "owner_type", PROPERTY_HINT_ENUM, owner_type_hint), "set_owner_type", "get_owner_type");
@@ -222,14 +252,28 @@ void TerrainLight::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_specular", "value"), &TerrainLight::set_specular);
 	ADD_PROPERTY(PropertyInfo(Variant::REAL, "light_specular"), "set_specular", "get_specular");
 
+	ClassDB::bind_method(D_METHOD("get_light_mode"), &TerrainLight::get_light_mode);
+	ClassDB::bind_method(D_METHOD("set_light_mode", "value"), &TerrainLight::set_light_mode);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "light_mode", PROPERTY_HINT_ENUM, "Add,Sub,Mix"), "set_light_mode", "get_light_mode");
+
+	ClassDB::bind_method(D_METHOD("get_item_cull_mask"), &TerrainLight::get_item_cull_mask);
+	ClassDB::bind_method(D_METHOD("set_item_cull_mask", "value"), &TerrainLight::set_item_cull_mask);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "item_cull_mask", PROPERTY_HINT_LAYERS_3D_RENDER), "set_item_cull_mask", "get_item_cull_mask");
+
 	ClassDB::bind_method(D_METHOD("to_dict"), &TerrainLight::to_dict);
 	ClassDB::bind_method(D_METHOD("from_dict", "data"), &TerrainLight::from_dict);
+
+#ifdef MODULE_VERTEX_LIGHTS_3D_ENABLED
+	ClassDB::bind_method(D_METHOD("get_vertex_lights_3d_rid"), &TerrainLight::get_vertex_lights_3d_rid);
+	ClassDB::bind_method(D_METHOD("set_vertex_lights_3d_rid", "rid"), &TerrainLight::set_vertex_lights_3d_rid);
+#endif
 
 	BIND_ENUM_CONSTANT(OWNER_TYPE_NONE);
 #ifdef MODULE_PROPS_ENABLED
 	BIND_ENUM_CONSTANT(OWNER_TYPE_PROP);
 #endif
-#ifdef MODULE_VERTEX_LIGHTS_3D_ENABLED
-	BIND_ENUM_CONSTANT(OWNER_TYPE_VERTEX_LIGHT_3D);
-#endif
+
+	BIND_ENUM_CONSTANT(LIGHT_MODE_ADD);
+	BIND_ENUM_CONSTANT(LIGHT_MODE_SUB);
+	BIND_ENUM_CONSTANT(LIGHT_MODE_MIX);
 }

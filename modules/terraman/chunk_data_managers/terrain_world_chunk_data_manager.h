@@ -1,8 +1,8 @@
-#ifndef PROP_EDITOR_PLUGIN_H
-#define PROP_EDITOR_PLUGIN_H
+#ifndef TERRAIN_WORLD_CHUNK_DATA_MANAGER_H
+#define TERRAIN_WORLD_CHUNK_DATA_MANAGER_H
 
 /*************************************************************************/
-/*  prop_editor_plugin.h                                                 */
+/*  terrain_world_chunk_data_manager.h                                   */
 /*************************************************************************/
 /*                         This file is part of:                         */
 /*                          PANDEMONIUM ENGINE                           */
@@ -32,55 +32,59 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                */
 /*************************************************************************/
 
-#include "editor/editor_node.h"
-#include "editor/editor_plugin.h"
+#include "core/object/resource.h"
 
-#include "editor/spatial_editor_gizmos.h"
+class TerrainChunk;
+class TerrainWorld;
 
-class PropInstanceSpatialGizmoPlugin;
-
-class PropEditorPlugin : public EditorPlugin {
-	GDCLASS(PropEditorPlugin, EditorPlugin);
+class TerrainWorldChunkDataManager : public Resource {
+	GDCLASS(TerrainWorldChunkDataManager, Resource);
 
 public:
-	virtual String get_name() const { return "PropEditorPlugin"; }
-	bool has_main_screen() const { return false; }
-	virtual void edit(Object *p_object) {}
-	virtual bool handles(Object *p_object) const { return false; }
-	virtual void make_visible(bool p_visible) {}
+	// Load
+	Ref<TerrainChunk> load_chunk(const Vector2i &p_chunk_position);
+	virtual Ref<TerrainChunk> _load_chunk(const Vector2i &p_chunk_position);
 
-	void convert_active_scene_to_prop_data();
-	void convert_selected_scene_to_prop_data();
-	void convert_scene(Node *root, const String &path);
+	void load_all_chunks(TerrainWorld *p_world);
+	void load_chunks(TerrainWorld *p_world, const Vector<Vector2i> &p_chunks);
+	void load_all_chunks_bind(Node *p_world);
+	void load_chunks_bind(Node *p_world, const Vector<Vector2i> &p_chunks);
 
-	void find_room_points(Variant param);
+	Vector<Vector2i> get_available_chunk_list();
+	virtual Vector<Vector2i> _get_available_chunk_list();
 
-	void _convert_active_scene_to_prop_data(Variant param);
-	void _convert_selected_scene_to_prop_data(Variant param);
-	void _quick_convert_button_pressed();
+	// Save
+	void save_chunk(const Ref<TerrainChunk> &p_chunk);
+	virtual void _save_chunk(const Ref<TerrainChunk> &p_chunk);
 
-	PropEditorPlugin(EditorNode *p_node);
-	~PropEditorPlugin();
+	void save_all_chunks(TerrainWorld *p_world);
+	void save_all_chunks_bind(Node *p_world);
+
+	// Delete
+	void delete_chunk_data_at(const Vector2i &p_chunk_position);
+	virtual void _delete_chunk_data_at(const Vector2i &p_chunk_position);
+
+	void delete_chunk_data(const Ref<TerrainChunk> &p_chunk);
+	virtual void _delete_chunk_data(const Ref<TerrainChunk> &p_chunk);
+
+	void delete_all_chunk_data();
+	virtual void _delete_all_chunk_data();
+
+	// Callbacks
+	void on_world_chunk_created(const Ref<TerrainChunk> &p_chunk);
+	virtual void _on_world_chunk_created(const Ref<TerrainChunk> &p_chunk);
+
+	void on_world_chunk_removed(const Ref<TerrainChunk> &p_chunk);
+	virtual void _on_world_chunk_removed(const Ref<TerrainChunk> &p_chunk);
+
+	void on_world_chunk_added(const Ref<TerrainChunk> &p_chunk);
+	virtual void _on_world_chunk_added(const Ref<TerrainChunk> &p_chunk);
+
+	TerrainWorldChunkDataManager();
+	~TerrainWorldChunkDataManager();
 
 protected:
 	static void _bind_methods();
-
-	EditorNode *editor;
-
-	Ref<PropInstanceSpatialGizmoPlugin> gizmo_plugin;
-};
-
-class PropInstanceSpatialGizmoPlugin : public EditorSpatialGizmoPlugin {
-	GDCLASS(PropInstanceSpatialGizmoPlugin, EditorSpatialGizmoPlugin);
-
-public:
-	bool has_gizmo(Spatial *p_spatial);
-	String get_gizmo_name() const;
-	int get_priority() const;
-	bool can_be_hidden() const;
-	void redraw(EditorSpatialGizmo *p_gizmo);
-
-	PropInstanceSpatialGizmoPlugin();
 };
 
 #endif
