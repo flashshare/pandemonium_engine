@@ -3,7 +3,7 @@ on: [push, pull_request]
 
 # Global Cache Settings
 env:
-  GODOT_BASE_BRANCH: 3.5
+  GODOT_BASE_BRANCH: 3.x
   SCONSFLAGS: verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=False
 
 jobs:
