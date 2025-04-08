@@ -1,8 +1,8 @@
-#ifndef PROP_EDITOR_PLUGIN_H
-#define PROP_EDITOR_PLUGIN_H
+#ifndef TERRAIN_WORLD_CHUNK_DATA_MANAGER_STATIC_FOLDER_RESOURCES_H
+#define TERRAIN_WORLD_CHUNK_DATA_MANAGER_STATIC_FOLDER_RESOURCES_H
 
 /*************************************************************************/
-/*  prop_editor_plugin.h                                                 */
+/*  terrain_world_chunk_data_manager_static_folder_resources.h           */
 /*************************************************************************/
 /*                         This file is part of:                         */
 /*                          PANDEMONIUM ENGINE                           */
@@ -32,55 +32,44 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                */
 /*************************************************************************/
 
-#include "editor/editor_node.h"
-#include "editor/editor_plugin.h"
+#include "terrain_world_chunk_data_manager.h"
 
-#include "editor/spatial_editor_gizmos.h"
+class TerrainChunk;
 
-class PropInstanceSpatialGizmoPlugin;
-
-class PropEditorPlugin : public EditorPlugin {
-	GDCLASS(PropEditorPlugin, EditorPlugin);
+class TerrainWorldChunkDataManagerStaticFolderResources : public TerrainWorldChunkDataManager {
+	GDCLASS(TerrainWorldChunkDataManagerStaticFolderResources, TerrainWorldChunkDataManager);
 
 public:
-	virtual String get_name() const { return "PropEditorPlugin"; }
-	bool has_main_screen() const { return false; }
-	virtual void edit(Object *p_object) {}
-	virtual bool handles(Object *p_object) const { return false; }
-	virtual void make_visible(bool p_visible) {}
+	String get_chunks_path() const;
+	void set_chunks_path(const String &p_chunks_path);
 
-	void convert_active_scene_to_prop_data();
-	void convert_selected_scene_to_prop_data();
-	void convert_scene(Node *root, const String &path);
+	String get_chunk_file_path(const Vector2i &p_chunk_position) const;
 
-	void find_room_points(Variant param);
+	// Load
+	virtual Ref<TerrainChunk> _load_chunk(const Vector2i &p_chunk_position);
+	virtual Vector<Vector2i> _get_available_chunk_list();
 
-	void _convert_active_scene_to_prop_data(Variant param);
-	void _convert_selected_scene_to_prop_data(Variant param);
-	void _quick_convert_button_pressed();
+	// Save
+	virtual void _save_chunk(const Ref<TerrainChunk> &p_chunk);
 
-	PropEditorPlugin(EditorNode *p_node);
-	~PropEditorPlugin();
+	// Delete
+	virtual void _delete_chunk_data_at(const Vector2i &p_chunk_position);
+	virtual void _delete_chunk_data(const Ref<TerrainChunk> &p_chunk);
+	virtual void _delete_all_chunk_data();
+
+	// Callbacks
+	virtual void _on_world_chunk_created(const Ref<TerrainChunk> &p_chunk);
+	virtual void _on_world_chunk_removed(const Ref<TerrainChunk> &p_chunk);
+	virtual void _on_world_chunk_added(const Ref<TerrainChunk> &p_chunk);
+
+	TerrainWorldChunkDataManagerStaticFolderResources();
+	~TerrainWorldChunkDataManagerStaticFolderResources();
 
 protected:
 	static void _bind_methods();
 
-	EditorNode *editor;
-
-	Ref<PropInstanceSpatialGizmoPlugin> gizmo_plugin;
-};
-
-class PropInstanceSpatialGizmoPlugin : public EditorSpatialGizmoPlugin {
-	GDCLASS(PropInstanceSpatialGizmoPlugin, EditorSpatialGizmoPlugin);
-
-public:
-	bool has_gizmo(Spatial *p_spatial);
-	String get_gizmo_name() const;
-	int get_priority() const;
-	bool can_be_hidden() const;
-	void redraw(EditorSpatialGizmo *p_gizmo);
-
-	PropInstanceSpatialGizmoPlugin();
+private:
+	String _chunks_path;
 };
 
 #endif

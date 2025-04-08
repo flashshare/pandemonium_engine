@@ -33,12 +33,16 @@
 
 #include "core/containers/hash_set.h"
 
+#include "core/object/method_bind_ext.gen.inc"
+
 #include "core/object/message_queue.h"
 #include "core/os/main_loop.h"
 #include "terrain_chunk.h"
 #include "terrain_structure.h"
 
 #include "../defines.h"
+
+#include "../chunk_data_managers/terrain_world_chunk_data_manager.h"
 
 #include "modules/modules_enabled.gen.h"
 
@@ -52,11 +56,17 @@
 
 #ifdef MODULE_MESH_DATA_RESOURCE_ENABLED
 #include "../../mesh_data_resource/props/prop_data_mesh_data.h"
+#include "modules/mesh_data_resource/mesh_data_resource.h"
 #endif
 
 #if TOOLS_ENABLED
 #include "editor/plugins/spatial_editor_plugin.h"
 #include "scene/3d/camera.h"
+#endif
+
+#ifdef MODULE_VERTEX_LIGHTS_3D_ENABLED
+#include "modules/vertex_lights_3d/vertex_lights_3d_server.h"
+#include "scene/resources/world_3d.h"
 #endif
 
 const String TerrainWorld::BINDING_STRING_CHANNEL_TYPE_INFO = "Type,Isolevel,Liquid,Liquid Level";
@@ -150,6 +160,19 @@ void TerrainWorld::set_level_generator(const Ref<TerrainLevelGenerator> &level_g
 	_level_generator = level_generator;
 }
 
+Ref<TerrainWorldChunkDataManager> TerrainWorld::get_world_chunk_data_manager() const {
+	return _world_chunk_data_manager;
+}
+void TerrainWorld::set_world_chunk_data_manager(const Ref<TerrainWorldChunkDataManager> &p_data_manager) {
+	if (_world_chunk_data_manager == p_data_manager) {
+		return;
+	}
+
+	_world_chunk_data_manager = p_data_manager;
+
+	property_list_changed_notify();
+}
+
 float TerrainWorld::get_voxel_scale() const {
 	return _voxel_scale;
 }
@@ -166,6 +189,23 @@ void TerrainWorld::set_voxel_scale(const float value) {
 		c->set_voxel_scale(_voxel_scale);
 	}
 }
+
+#ifdef MODULE_VERTEX_LIGHTS_3D_ENABLED
+bool TerrainWorld::get_use_vertex_lights_3d() const {
+	return _use_vertex_lights_3d;
+}
+void TerrainWorld::set_use_vertex_lights_3d(const bool value) {
+	_use_vertex_lights_3d = value;
+
+	if (is_inside_tree()) {
+		if (_use_vertex_lights_3d) {
+			VertexLights3DServer::get_singleton()->connect("map_changed", this, "_on_vertex_lights_3d_map_changed");
+		} else {
+			VertexLights3DServer::get_singleton()->disconnect("map_changed", this, "_on_vertex_lights_3d_map_changed");
+		}
+	}
+}
+#endif
 
 int TerrainWorld::get_chunk_spawn_range() const {
 	return _chunk_spawn_range;
@@ -299,13 +339,23 @@ void TerrainWorld::chunk_add(Ref<TerrainChunk> chunk, const int x, const int z) 
 		}
 	}
 
+	if (_world_chunk_data_manager.is_valid()) {
+		_world_chunk_data_manager->on_world_chunk_added(chunk);
+	}
+
 	if (has_method("_chunk_added")) {
 		call("_chunk_added", chunk);
 	}
 
 	emit_signal("chunk_added", chunk);
 
-	generation_queue_add_to(chunk);
+	if (!chunk->get_is_terrain_generated()) {
+		generation_queue_add_to(chunk);
+	} else {
+		if (is_inside_tree()) {
+			chunk->build();
+		}
+	}
 }
 bool TerrainWorld::chunk_has(const int x, const int z) const {
 	return _chunks.has(IntPos(x, z));
@@ -356,6 +406,10 @@ Ref<TerrainChunk> TerrainWorld::chunk_remove(const int x, const int z) {
 
 	_chunks.erase(pos);
 
+	if (_world_chunk_data_manager.is_valid()) {
+		_world_chunk_data_manager->on_world_chunk_removed(chunk);
+	}
+
 	emit_signal("chunk_removed", chunk);
 
 	return chunk;
@@ -385,6 +439,10 @@ Ref<TerrainChunk> TerrainWorld::chunk_remove_index(const int index) {
 	//never remove from this here
 	//_generating.erase(chunk);
 
+	if (_world_chunk_data_manager.is_valid()) {
+		_world_chunk_data_manager->on_world_chunk_removed(chunk);
+	}
+
 	emit_signal("chunk_removed", chunk);
 
 	return chunk;
@@ -404,6 +462,10 @@ void TerrainWorld::chunks_clear() {
 		Ref<TerrainChunk> chunk = _chunks_vector.get(i);
 
 		chunk->exit_tree();
+
+		if (_world_chunk_data_manager.is_valid()) {
+			_world_chunk_data_manager->on_world_chunk_removed(chunk);
+		}
 
 		emit_signal("chunk_removed", chunk);
 	}
@@ -429,8 +491,58 @@ void TerrainWorld::chunks_clear() {
 Ref<TerrainChunk> TerrainWorld::chunk_get_or_create(int x, int z) {
 	Ref<TerrainChunk> chunk = chunk_get(x, z);
 
-	if (!chunk.is_valid()) {
-		chunk = chunk_create(x, z);
+	if (chunk.is_valid()) {
+		return chunk;
+	}
+
+	// Try to load first
+	if (_world_chunk_data_manager.is_valid()) {
+		chunk = _world_chunk_data_manager->load_chunk(Vector2i(x, z));
+
+		if (chunk.is_valid()) {
+			chunk_setup(chunk);
+			chunk_add(chunk, x, z);
+			return chunk;
+		}
+	}
+
+	chunk = chunk_create(x, z);
+
+	return chunk;
+}
+
+Ref<TerrainChunk> TerrainWorld::chunk_get_or_load(const int x, const int z) {
+	Ref<TerrainChunk> chunk = chunk_get(x, z);
+
+	if (chunk.is_valid()) {
+		return chunk;
+	}
+
+	// Try to load first
+	if (_world_chunk_data_manager.is_valid()) {
+		chunk = _world_chunk_data_manager->load_chunk(Vector2i(x, z));
+
+		if (chunk.is_valid()) {
+			chunk_setup(chunk);
+			chunk_add(chunk, x, z);
+			return chunk;
+		}
+	}
+
+	return chunk;
+}
+
+Ref<TerrainChunk> TerrainWorld::chunk_load(const int x, const int z) {
+	Ref<TerrainChunk> chunk;
+
+	if (_world_chunk_data_manager.is_valid()) {
+		chunk = _world_chunk_data_manager->load_chunk(Vector2i(x, z));
+
+		if (chunk.is_valid()) {
+			chunk_setup(chunk);
+			chunk_add(chunk, x, z);
+			return chunk;
+		}
 	}
 
 	return chunk;
@@ -440,15 +552,16 @@ Ref<TerrainChunk> TerrainWorld::chunk_create(const int x, const int z) {
 	Ref<TerrainChunk> c;
 	c = call("_create_chunk", x, z, Ref<TerrainChunk>());
 
+	chunk_setup(c);
+	chunk_add(c, x, z);
+
+	if (_world_chunk_data_manager.is_valid()) {
+		_world_chunk_data_manager->on_world_chunk_created(c);
+	}
+
 	generation_queue_add_to(c);
 
 	return c;
-}
-
-void TerrainWorld::chunk_setup(Ref<TerrainChunk> chunk) {
-	ERR_FAIL_COND(!chunk.is_valid());
-
-	call("_create_chunk", chunk->get_position_x(), chunk->get_position_z(), chunk);
 }
 
 Ref<TerrainChunk> TerrainWorld::_create_chunk(const int x, const int z, Ref<TerrainChunk> chunk) {
@@ -457,13 +570,9 @@ Ref<TerrainChunk> TerrainWorld::_create_chunk(const int x, const int z, Ref<Terr
 	}
 
 	//no meshers here
-
-	ERR_FAIL_COND_V(!chunk.is_valid(), NULL);
-
-	chunk->set_name("Chunk[" + String::num(x) + "," + String::num(z) + "]");
-
 	chunk->set_voxel_world(this);
 
+	chunk->set_name("Chunk[" + String::num(x) + "," + String::num(z) + "]");
 	chunk->set_position(x, z);
 	chunk->set_world_height(_world_height);
 	chunk->set_library(_library);
@@ -475,9 +584,27 @@ Ref<TerrainChunk> TerrainWorld::_create_chunk(const int x, const int z, Ref<Terr
 		chunk->set_visible(false);
 	}
 
-	chunk_add(chunk, x, z);
-
 	return chunk;
+}
+
+void TerrainWorld::chunk_setup(Ref<TerrainChunk> chunk) {
+	ERR_FAIL_COND(!chunk.is_valid());
+
+	if (chunk->get_is_setup()) {
+		return;
+	}
+
+	call("_setup_chunk", chunk);
+
+	chunk->set_is_setup(true);
+}
+
+void TerrainWorld::_setup_chunk(Ref<TerrainChunk> p_chunk) {
+	p_chunk->set_voxel_world(this);
+
+	if (!get_active()) {
+		p_chunk->set_visible(false);
+	}
 }
 
 void TerrainWorld::chunk_generate(Ref<TerrainChunk> chunk) {
@@ -493,6 +620,12 @@ void TerrainWorld::chunk_generate(Ref<TerrainChunk> chunk) {
 	}
 
 	chunk->build();
+}
+
+void TerrainWorld::force_save_all_chunks() {
+	ERR_FAIL_COND(!_world_chunk_data_manager.is_valid());
+
+	_world_chunk_data_manager->save_all_chunks(this);
 }
 
 Vector<Variant> TerrainWorld::chunks_get() {
@@ -613,18 +746,18 @@ int TerrainWorld::generation_get_size() const {
 	return _generating.size();
 }
 
-void TerrainWorld::scene_add(const Ref<PackedScene> &p_scene, const Transform &p_transform, const Node *p_node, const bool p_original) {
+void TerrainWorld::scene_add(const Ref<PackedScene> &p_scene, const Transform &p_transform, const Node *p_node, const bool p_original, const String &p_name) {
 	ERR_FAIL_COND(!p_scene.is_valid());
 
 	Vector3 wp;
 	wp = p_transform.xform(wp);
 	Ref<TerrainChunk> chunk = get_or_create_chunk_at_world_position(wp);
 
-	chunk->scene_add(p_scene, p_transform, p_node, p_original);
+	chunk->scene_add(p_scene, p_transform, p_node, p_original, p_name);
 }
 
 #ifdef MODULE_PROPS_ENABLED
-void TerrainWorld::prop_add(Transform transform, const Ref<PropData> &prop, const bool apply_voxel_scale, const bool p_original) {
+void TerrainWorld::prop_add(Transform transform, const Ref<PropData> &prop, const bool apply_voxel_scale, const bool p_original, const String &p_name) {
 	ERR_FAIL_COND(!prop.is_valid());
 
 	if (apply_voxel_scale) {
@@ -635,7 +768,8 @@ void TerrainWorld::prop_add(Transform transform, const Ref<PropData> &prop, cons
 	wp = transform.xform(wp);
 	Ref<TerrainChunk> chunk = get_or_create_chunk_at_world_position(wp);
 
-	chunk->prop_add(transform, prop, p_original);
+	chunk->prop_add(transform, prop, p_original, p_name);
+	chunk->build();
 
 	int count = prop->get_prop_count();
 	for (int i = 0; i < count; ++i) {
@@ -724,11 +858,36 @@ void TerrainWorld::prop_add(Transform transform, const Ref<PropData> &prop, cons
 			chunk_local_tform.origin = chunk->to_local(chunk_local_tform.origin);
 
 			chunk->mesh_data_resource_add(chunk_local_tform, mdr, mesh_data->get_texture(), Color(1, 1, 1, 1), false, false);
+			chunk->build();
 
 			continue;
 		}
 #endif
 	}
+}
+#endif
+
+#ifdef MODULE_MESH_DATA_RESOURCE_ENABLED
+void TerrainWorld::mesh_data_resource_add(const Ref<MeshDataResource> &p_mesh, const Transform &p_transform, const Ref<Texture> &p_texture, const Color &p_color, const bool p_original, const String &p_name) {
+	ERR_FAIL_COND(!p_mesh.is_valid());
+
+	Vector3 wp;
+	wp = p_transform.xform(wp);
+	Ref<TerrainChunk> chunk = get_or_create_chunk_at_world_position(wp);
+
+	chunk->mesh_data_resource_add(chunk->get_global_transform().affine_inverse() * p_transform, p_mesh, p_texture, p_color, false, p_original, p_name);
+	chunk->build();
+}
+
+void TerrainWorld::mesh_data_resource_add_material(const Ref<MeshDataResource> &p_mesh, const Transform &p_transform, const Ref<Texture> &p_texture, const Ref<Material> &p_material, const bool p_original, const String &p_name) {
+	ERR_FAIL_COND(!p_mesh.is_valid());
+
+	Vector3 wp;
+	wp = p_transform.xform(wp);
+	Ref<TerrainChunk> chunk = get_or_create_chunk_at_world_position(wp);
+
+	chunk->mesh_data_resource_add_material(chunk->get_global_transform().affine_inverse() * p_transform, p_mesh, p_texture, p_material, false, p_original, p_name);
+	chunk->build();
 }
 #endif
 
@@ -745,6 +904,7 @@ void TerrainWorld::light_add(const Ref<TerrainLight> &light) {
 	ERR_FAIL_COND(!chunk.is_valid());
 
 	chunk->light_add(light);
+	chunk->build();
 }
 void TerrainWorld::light_remove(const Ref<TerrainLight> &light) {
 	if (!light.is_valid()) {
@@ -945,6 +1105,20 @@ Vector2i TerrainWorld::world_position_to_world_data_position(const Vector3 &worl
 
 	return Vector2i(pos.x, pos.z);
 }
+
+Vector3i TerrainWorld::world_position_to_world_data_position_3d(const Vector3 &world_position) {
+	Vector3 pos = world_position / get_voxel_scale();
+
+	return Vector3i(pos.x, pos.y, pos.z);
+}
+
+Vector3 TerrainWorld::world_data_position_to_world_position(const Vector2i &p_position) {
+	return Vector3(p_position.x, 0, p_position.y) * get_voxel_scale();
+}
+Vector3 TerrainWorld::world_data_position_to_world_position_3d(const Vector3i &p_position) {
+	return Vector3(p_position.x, p_position.y, p_position.z) * get_voxel_scale();
+}
+
 uint8_t TerrainWorld::get_voxel_at_world_data_position(const Vector2i &world_data_position, const int channel_index) {
 	// TODO rework this so it works directly with ints.
 
@@ -1306,6 +1480,10 @@ TerrainWorld::TerrainWorld() {
 	_player = NULL;
 	_max_frame_chunk_build_steps = 0;
 	_num_frame_chunk_build_steps = 0;
+
+#ifdef MODULE_VERTEX_LIGHTS_3D_ENABLED
+	_use_vertex_lights_3d = true;
+#endif
 }
 
 TerrainWorld ::~TerrainWorld() {
@@ -1347,9 +1525,38 @@ void TerrainWorld::_generate_chunk(Ref<TerrainChunk> chunk) {
 	}
 }
 
+void TerrainWorld::_editor_button_property_pressed(const StringName &p_property) {
+	if (p_property == "force_save_all_chunks") {
+		force_save_all_chunks();
+	}
+}
+
+void TerrainWorld::_get_property_list(List<PropertyInfo> *p_list) const {
+	if (_world_chunk_data_manager.is_valid()) {
+		p_list->push_back(PropertyInfo(Variant::NIL, "force_save_all_chunks", PROPERTY_HINT_BUTTON, "_editor_button_property_pressed:Save/EditorIcons"));
+	}
+}
+
+void TerrainWorld::_validate_property(PropertyInfo &property) const {
+	if (property.name == "chunks") {
+		if (_world_chunk_data_manager.is_valid()) {
+			// Show in editor, but don't save with the scene
+			property.usage = PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_NETWORK;
+		} else {
+			property.usage = PROPERTY_USAGE_DEFAULT;
+		}
+	}
+}
+
 void TerrainWorld::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
+#ifdef MODULE_VERTEX_LIGHTS_3D_ENABLED
+			if (_use_vertex_lights_3d) {
+				VertexLights3DServer::get_singleton()->connect("map_changed", this, "_on_vertex_lights_3d_map_changed");
+			}
+#endif
+
 			set_player_bind(get_node_or_null(get_player_path()));
 
 			set_process_internal(true);
@@ -1366,6 +1573,9 @@ void TerrainWorld::_notification(int p_what) {
 				if (chunk.is_valid()) {
 					chunk_setup(chunk);
 
+					chunk->set_voxel_world(this);
+					chunk->enter_tree();
+
 					chunk->build();
 				}
 			}
@@ -1373,6 +1583,8 @@ void TerrainWorld::_notification(int p_what) {
 		}
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			_num_frame_chunk_build_steps = 0;
+
+			bool is_a_chunk_building = false;
 
 			for (int i = 0; i < _chunks_vector.size(); ++i) {
 				Ref<TerrainChunk> chunk = _chunks_vector[i];
@@ -1386,9 +1598,13 @@ void TerrainWorld::_notification(int p_what) {
 				if (chunk->get_is_generating()) {
 					chunk->generation_process(get_process_delta_time());
 				}
+
+				if (chunk->get_is_generating()) {
+					is_a_chunk_building = true;
+				}
 			}
 
-			if (_is_priority_generation && _generation_queue.empty() && _generating.empty()) {
+			if (_is_priority_generation && !is_a_chunk_building && _generation_queue.empty() && _generating.empty()) {
 				_is_priority_generation = false;
 
 				call("_generation_finished");
@@ -1457,6 +1673,12 @@ void TerrainWorld::_notification(int p_what) {
 			break;
 		}
 		case NOTIFICATION_EXIT_TREE: {
+#ifdef MODULE_VERTEX_LIGHTS_3D_ENABLED
+			if (_use_vertex_lights_3d) {
+				VertexLights3DServer::get_singleton()->disconnect("map_changed", this, "_on_vertex_lights_3d_map_changed");
+			}
+#endif
+
 			for (int i = 0; i < _chunks_vector.size(); ++i) {
 				Ref<TerrainChunk> chunk = _chunks_vector[i];
 
@@ -1486,6 +1708,26 @@ void TerrainWorld::_notification(int p_what) {
 		} break;
 	}
 }
+
+#ifdef MODULE_VERTEX_LIGHTS_3D_ENABLED
+void TerrainWorld::_on_vertex_lights_3d_map_changed(RID p_map) {
+	if (!_use_vertex_lights_3d) {
+		return;
+	}
+
+	if (!is_inside_world()) {
+		return;
+	}
+
+	if (get_world_3d()->get_vertex_lights_3d_map() == p_map) {
+		for (int i = 0; i < _chunks_vector.size(); ++i) {
+			Ref<TerrainChunk> chunk = _chunks_vector[i];
+
+			chunk->build();
+		}
+	}
+}
+#endif
 
 void TerrainWorld::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("chunk_mesh_generation_finished", PropertyInfo(Variant::OBJECT, "chunk", PROPERTY_HINT_RESOURCE_TYPE, "TerrainChunk")));
@@ -1536,9 +1778,19 @@ void TerrainWorld::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_level_generator", "level_generator"), &TerrainWorld::set_level_generator);
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "level_generator", PROPERTY_HINT_RESOURCE_TYPE, "TerrainLevelGenerator"), "set_level_generator", "get_level_generator");
 
+	ClassDB::bind_method(D_METHOD("get_world_chunk_data_manager"), &TerrainWorld::get_world_chunk_data_manager);
+	ClassDB::bind_method(D_METHOD("set_world_chunk_data_manager", "level_generator"), &TerrainWorld::set_world_chunk_data_manager);
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "world_chunk_data_manager", PROPERTY_HINT_RESOURCE_TYPE, "TerrainWorldChunkDataManager"), "set_world_chunk_data_manager", "get_world_chunk_data_manager");
+
 	ClassDB::bind_method(D_METHOD("get_voxel_scale"), &TerrainWorld::get_voxel_scale);
 	ClassDB::bind_method(D_METHOD("set_voxel_scale", "value"), &TerrainWorld::set_voxel_scale);
 	ADD_PROPERTY(PropertyInfo(Variant::REAL, "voxel_scale"), "set_voxel_scale", "get_voxel_scale");
+
+#ifdef MODULE_VERTEX_LIGHTS_3D_ENABLED
+	ClassDB::bind_method(D_METHOD("get_use_vertex_lights_3d"), &TerrainWorld::get_use_vertex_lights_3d);
+	ClassDB::bind_method(D_METHOD("set_use_vertex_lights_3d", "value"), &TerrainWorld::set_use_vertex_lights_3d);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_vertex_lights_3d"), "set_use_vertex_lights_3d", "get_use_vertex_lights_3d");
+#endif
 
 	ClassDB::bind_method(D_METHOD("get_chunk_spawn_range"), &TerrainWorld::get_chunk_spawn_range);
 	ClassDB::bind_method(D_METHOD("set_chunk_spawn_range", "value"), &TerrainWorld::set_chunk_spawn_range);
@@ -1583,6 +1835,8 @@ void TerrainWorld::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("chunks_clear"), &TerrainWorld::chunks_clear);
 
+	ClassDB::bind_method(D_METHOD("force_save_all_chunks"), &TerrainWorld::force_save_all_chunks);
+
 	ClassDB::bind_method(D_METHOD("chunks_get"), &TerrainWorld::chunks_get);
 	ClassDB::bind_method(D_METHOD("chunks_set"), &TerrainWorld::chunks_set);
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "chunks", PROPERTY_HINT_NONE, "23/20:TerrainChunk", PROPERTY_USAGE_DEFAULT, "TerrainChunk"), "chunks_set", "chunks_get");
@@ -1602,24 +1856,34 @@ void TerrainWorld::_bind_methods() {
 	BIND_VMETHOD(MethodInfo("_generation_finished"));
 
 	BIND_VMETHOD(MethodInfo(PropertyInfo(Variant::OBJECT, "ret", PROPERTY_HINT_RESOURCE_TYPE, "TerrainChunk"), "_create_chunk", PropertyInfo(Variant::INT, "x"), PropertyInfo(Variant::INT, "z"), PropertyInfo(Variant::OBJECT, "chunk", PROPERTY_HINT_RESOURCE_TYPE, "TerrainChunk")));
+
 	BIND_VMETHOD(MethodInfo("_prepare_chunk_for_generation", PropertyInfo(Variant::OBJECT, "chunk", PROPERTY_HINT_RESOURCE_TYPE, "TerrainChunk")));
 	BIND_VMETHOD(MethodInfo("_generate_chunk", PropertyInfo(Variant::OBJECT, "chunk", PROPERTY_HINT_RESOURCE_TYPE, "TerrainChunk")));
+	BIND_VMETHOD(MethodInfo("_setup_chunk", PropertyInfo(Variant::OBJECT, "chunk", PROPERTY_HINT_RESOURCE_TYPE, "TerrainChunk")));
 
 	ClassDB::bind_method(D_METHOD("chunk_get_or_create", "x", "z"), &TerrainWorld::chunk_get_or_create);
+	ClassDB::bind_method(D_METHOD("chunk_get_or_load", "x", "z"), &TerrainWorld::chunk_get_or_load);
+	ClassDB::bind_method(D_METHOD("chunk_load", "x", "z"), &TerrainWorld::chunk_load);
 	ClassDB::bind_method(D_METHOD("chunk_create", "x", "z"), &TerrainWorld::chunk_create);
 	ClassDB::bind_method(D_METHOD("chunk_setup", "chunk"), &TerrainWorld::chunk_setup);
 
 	ClassDB::bind_method(D_METHOD("_create_chunk", "x", "z", "chunk"), &TerrainWorld::_create_chunk);
 	ClassDB::bind_method(D_METHOD("_generate_chunk", "chunk"), &TerrainWorld::_generate_chunk);
+	ClassDB::bind_method(D_METHOD("_setup_chunk", "chunk"), &TerrainWorld::_setup_chunk);
 
 	ClassDB::bind_method(D_METHOD("can_chunk_do_build_step"), &TerrainWorld::can_chunk_do_build_step);
 	ClassDB::bind_method(D_METHOD("is_position_walkable", "position"), &TerrainWorld::is_position_walkable);
 	ClassDB::bind_method(D_METHOD("on_chunk_mesh_generation_finished", "chunk"), &TerrainWorld::on_chunk_mesh_generation_finished);
 
-	ClassDB::bind_method(D_METHOD("scene_add", "scene", "transform", "node", "original"), &TerrainWorld::scene_add, DEFVAL(Transform()), DEFVAL(Variant()), DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("scene_add", "scene", "transform", "node", "original", "name"), &TerrainWorld::scene_add, DEFVAL(Transform()), DEFVAL(Variant()), DEFVAL(true), DEFVAL(String()));
 
 #ifdef MODULE_PROPS_ENABLED
-	ClassDB::bind_method(D_METHOD("prop_add", "transform", "prop", "apply_voxel_scale", "original"), &TerrainWorld::prop_add, DEFVAL(true), DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("prop_add", "transform", "prop", "apply_voxel_scale", "original", "name"), &TerrainWorld::prop_add, DEFVAL(true), DEFVAL(true), DEFVAL(String()));
+#endif
+
+#ifdef MODULE_MESH_DATA_RESOURCE_ENABLED
+	ClassDB::bind_method(D_METHOD("mesh_data_resource_add", "mesh", "transform", "texture", "color", "original", "name"), &TerrainWorld::mesh_data_resource_add, DEFVAL(Ref<Texture>()), DEFVAL(Color(1, 1, 1, 1)), DEFVAL(true), DEFVAL(String()));
+	ClassDB::bind_method(D_METHOD("mesh_data_resource_add_material", "mesh", "transform", "texture", "material", "original", "name"), &TerrainWorld::mesh_data_resource_add_material, DEFVAL(Ref<Texture>()), DEFVAL(Color(1, 1, 1, 1)), DEFVAL(true), DEFVAL(String()));
 #endif
 
 	//Lights
@@ -1635,6 +1899,10 @@ void TerrainWorld::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("world_data_position_to_chunk_position", "world_data_position"), &TerrainWorld::world_data_position_to_chunk_position);
 
 	ClassDB::bind_method(D_METHOD("world_position_to_world_data_position", "world_position"), &TerrainWorld::world_position_to_world_data_position);
+	ClassDB::bind_method(D_METHOD("world_position_to_world_data_position_3d", "world_position"), &TerrainWorld::world_position_to_world_data_position_3d);
+	ClassDB::bind_method(D_METHOD("world_data_position_to_world_position", "position"), &TerrainWorld::world_data_position_to_world_position);
+	ClassDB::bind_method(D_METHOD("world_data_position_to_world_position_3d", "position"), &TerrainWorld::world_data_position_to_world_position_3d);
+
 	ClassDB::bind_method(D_METHOD("get_voxel_at_world_data_position", "world_data_position", "channel_index"), &TerrainWorld::get_voxel_at_world_data_position);
 	ClassDB::bind_method(D_METHOD("set_voxel_at_world_data_position", "world_data_position", "data", "channel_index", "rebuild", "allow_creating_chunks "), &TerrainWorld::set_voxel_at_world_data_position, DEFVAL(true), DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("get_chunk_at_world_data_position", "world_data_position"), &TerrainWorld::get_chunk_at_world_data_position);
@@ -1647,6 +1915,12 @@ void TerrainWorld::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("_get_channel_index_info", "channel_type"), &TerrainWorld::_get_channel_index_info);
 
 	ClassDB::bind_method(D_METHOD("get_editor_camera"), &TerrainWorld::get_editor_camera);
+
+	ClassDB::bind_method(D_METHOD("_editor_button_property_pressed"), &TerrainWorld::_editor_button_property_pressed);
+
+#ifdef MODULE_VERTEX_LIGHTS_3D_ENABLED
+	ClassDB::bind_method(D_METHOD("_on_vertex_lights_3d_map_changed"), &TerrainWorld::_on_vertex_lights_3d_map_changed);
+#endif
 
 	BIND_ENUM_CONSTANT(CHANNEL_TYPE_INFO_TYPE);
 	BIND_ENUM_CONSTANT(CHANNEL_TYPE_INFO_ISOLEVEL);

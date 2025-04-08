@@ -57,6 +57,7 @@ public:
 		TOOL_MODE_PAINT_PICKER,
 		TOOL_MODE_CHUNK_SPAWN_BRUSH,
 		TOOL_MODE_CHUNK_REMOVE_BRUSH,
+		TOOL_MODE_BAKING_TOOLS,
 		// TODO object manipulation tools.
 	};
 
@@ -82,7 +83,7 @@ protected:
 
 	// Used by UndoRedo
 	void apply_data(const Array &p_data);
-	
+
 	void do_chunk_added_action(const Array &p_data);
 	void undo_chunk_added_action(const Array &p_data);
 	void do_chunk_removed_action(const Array &p_data);
@@ -97,6 +98,18 @@ protected:
 	HashMap<Vector2i, uint8_t> _current_data;
 	HashMap<Vector2i, Ref<TerrainChunk>> _created_chunks;
 	HashMap<Vector2i, Ref<TerrainChunk>> _removed_chunks;
+
+	void bake_props(const ObjectID p_world);
+	void un_bake_props(const ObjectID p_world);
+
+	void bake_scenes(const ObjectID p_world);
+	void un_bake_scenes(const ObjectID p_world);
+
+	void bake_mdis(const ObjectID p_world);
+	void un_bake_mdis(const ObjectID p_world);
+
+	void bake_vertex_lights(const ObjectID p_world);
+	void un_bake_vertex_lights(const ObjectID p_world);
 
 protected:
 	static void _bind_methods();
@@ -121,6 +134,18 @@ protected:
 
 	void _on_chunk_spawn_brush_size_slider_changed(float value);
 	void _on_chunk_remove_brush_size_slider_changed(float value);
+
+	void _on_bake_props_button_pressed();
+	void _on_un_bake_props_button_pressed();
+
+	void _on_bake_scenes_button_pressed();
+	void _on_un_bake_scenes_button_pressed();
+
+	void _on_bake_mdis_button_pressed();
+	void _on_un_bake_mdis_button_pressed();
+
+	void _on_bake_vertex_lights_button_pressed();
+	void _on_un_bake_vertex_lights_button_pressed();
 
 private:
 	UndoRedo *_undo_redo;
@@ -178,6 +203,7 @@ private:
 	ToolButton *_paint_picker_button;
 	ToolButton *_chunk_spawn_brush_button;
 	ToolButton *_chunk_remove_brush_button;
+	ToolButton *_baking_tools_button;
 
 	HFlowContainer *_tool_button_container;
 	Ref<ButtonGroup> _tool_button_group;
@@ -213,6 +239,8 @@ private:
 
 	VBoxContainer *_chunk_remove_brush_tool_container;
 	HSlider *_chunk_remove_brush_size_slider;
+
+	VBoxContainer *_baking_tools_tool_container;
 };
 
 class TerrainWorldEditorPlugin : public EditorPlugin {

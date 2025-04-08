@@ -47,9 +47,13 @@ public:
 #ifdef MODULE_PROPS_ENABLED
 		OWNER_TYPE_PROP,
 #endif
-#ifdef MODULE_VERTEX_LIGHTS_3D_ENABLED
-		OWNER_TYPE_VERTEX_LIGHT_3D,
-#endif
+	};
+
+	enum LightMode {
+		LIGHT_MODE_ADD = 0,
+		LIGHT_MODE_SUB,
+		LIGHT_MODE_MIX,
+		//LIGHT_MODE_MASK
 	};
 
 	OwnerType get_owner_type() const;
@@ -85,6 +89,17 @@ public:
 	real_t get_specular() const;
 	void set_specular(const real_t value);
 
+	LightMode get_light_mode() const;
+	void set_light_mode(const LightMode value);
+
+	int get_item_cull_mask();
+	void set_item_cull_mask(const int p_item_cull_mask);
+
+#ifdef MODULE_VERTEX_LIGHTS_3D_ENABLED
+	RID get_vertex_lights_3d_rid() const;
+	void set_vertex_lights_3d_rid(const RID p_rid);
+#endif
+
 	Dictionary to_dict();
 	void from_dict(const Dictionary &p_data);
 
@@ -109,8 +124,17 @@ private:
 	real_t _indirect_energy;
 	bool _negative;
 	real_t _specular;
+
+	LightMode _light_mode;
+
+	int _item_cull_mask;
+
+#ifdef MODULE_VERTEX_LIGHTS_3D_ENABLED
+	RID _vertex_lights_3d_rid;
+#endif
 };
 
 VARIANT_ENUM_CAST(TerrainLight::OwnerType);
+VARIANT_ENUM_CAST(TerrainLight::LightMode);
 
 #endif
