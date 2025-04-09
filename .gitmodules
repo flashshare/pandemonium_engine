@@ -1,3 +1,4 @@
 [submodule "platform/switch"]
 	path = platform/switch
-	url = https://github.com/Homebrodot/platform-switch
+	url = https://github.com/Homebrodot/platform-switch.git
+	branch = pandemonium/4.2
