@@ -1,8 +1,8 @@
-#ifndef ESS_EDITOR_PLUGIN_H
-#define ESS_EDITOR_PLUGIN_H
+#ifndef ESS_ENTITY_WORLD_SPAWNER_3D_SINGLE_H
+#define ESS_ENTITY_WORLD_SPAWNER_3D_SINGLE_H
 
 /*************************************************************************/
-/*  ess_editor_plugin.h                                                  */
+/*  ess_entity_world_spawner_3d_single.h                                 */
 /*************************************************************************/
 /*                         This file is part of:                         */
 /*                          PANDEMONIUM ENGINE                           */
@@ -32,51 +32,48 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                */
 /*************************************************************************/
 
-#include "editor/editor_node.h"
-#include "editor/editor_plugin.h"
+#include "ess_entity_world_spawner_3d.h"
 
-#include "editor/spatial_editor_gizmos.h"
+class EntityData;
 
-class WorldSpawner3DSpatialGizmoPlugin;
-
-class ESSEditorPlugin : public EditorPlugin {
-	GDCLASS(ESSEditorPlugin, EditorPlugin);
+class ESSEntityWorldSpawner3DSingle : public ESSEntityWorldSpawner3D {
+	GDCLASS(ESSEntityWorldSpawner3DSingle, ESSEntityWorldSpawner3D);
 
 public:
-	virtual String get_name() const { return "ESSEditorPlugin"; }
-	bool has_main_screen() const { return false; }
-	virtual void edit(Object *p_object) {}
-	virtual bool handles(Object *p_object) const { return false; }
-	virtual void make_visible(bool p_visible) {}
-	void fix_ids(Variant param);
+	String get_entity_name() const;
+	void set_entity_name(const String &p_name);
 
-	ESSEditorPlugin(EditorNode *p_node);
-	~ESSEditorPlugin();
+	Ref<EntityData> get_entity_data() const;
+	void set_entity_data(const Ref<EntityData> &p_data);
+
+	int get_entity_level() const;
+	void set_entity_level(const int p_level);
+
+	float get_respawn_time_min() const;
+	void set_respawn_time_min(const float p_respawn_time);
+
+	float get_respawn_time_max() const;
+	void set_respawn_time_max(const float p_respawn_time);
+
+	virtual void _spawn();
+
+	ESSEntityWorldSpawner3DSingle();
+	~ESSEntityWorldSpawner3DSingle();
 
 protected:
+	void _notification(int p_what);
 	static void _bind_methods();
 
-	EditorNode *editor;
+	void _on_entity_tree_exited();
 
-	Ref<WorldSpawner3DSpatialGizmoPlugin> gizmo_plugin;
-};
+	String _entity_name;
+	Ref<EntityData> _entity_data;
+	int _entity_level;
+	float _respawn_time_min;
+	float _respawn_time_max;
+	real_t _respawn_timer;
 
-class WorldSpawner3DSpatialGizmoPlugin : public EditorSpatialGizmoPlugin {
-	GDCLASS(WorldSpawner3DSpatialGizmoPlugin, EditorSpatialGizmoPlugin);
-
-public:
-	bool has_gizmo(Spatial *p_spatial);
-	String get_gizmo_name() const;
-	int get_priority() const;
-	bool can_be_hidden() const;
-	void redraw(EditorSpatialGizmo *p_gizmo);
-
-	String get_handle_name(const EditorSpatialGizmo *p_gizmo, int p_id, bool p_secondary) const;
-	Variant get_handle_value(EditorSpatialGizmo *p_gizmo, int p_id, bool p_secondary) const;
-	void set_handle(EditorSpatialGizmo *p_gizmo, int p_id, bool p_secondary, Camera *p_camera, const Point2 &p_point);
-	void commit_handle(EditorSpatialGizmo *p_gizmo, int p_id, bool p_secondary, const Variant &p_restore, bool p_cancel = false);
-
-	WorldSpawner3DSpatialGizmoPlugin();
+	ObjectID _entity;
 };
 
 #endif

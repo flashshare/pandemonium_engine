@@ -1,8 +1,8 @@
-#ifndef ESS_EDITOR_PLUGIN_H
-#define ESS_EDITOR_PLUGIN_H
+#ifndef ESS_ENTITY_WORLD_SPAWNER_3D_H
+#define ESS_ENTITY_WORLD_SPAWNER_3D_H
 
 /*************************************************************************/
-/*  ess_editor_plugin.h                                                  */
+/*  ess_entity_world_spawner_3d.h                                        */
 /*************************************************************************/
 /*                         This file is part of:                         */
 /*                          PANDEMONIUM ENGINE                           */
@@ -32,51 +32,24 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                */
 /*************************************************************************/
 
-#include "editor/editor_node.h"
-#include "editor/editor_plugin.h"
+#include "scene/main/spatial.h"
 
-#include "editor/spatial_editor_gizmos.h"
+class EntityCreateInfo;
 
-class WorldSpawner3DSpatialGizmoPlugin;
-
-class ESSEditorPlugin : public EditorPlugin {
-	GDCLASS(ESSEditorPlugin, EditorPlugin);
+class ESSEntityWorldSpawner3D : public Spatial {
+	GDCLASS(ESSEntityWorldSpawner3D, Spatial);
 
 public:
-	virtual String get_name() const { return "ESSEditorPlugin"; }
-	bool has_main_screen() const { return false; }
-	virtual void edit(Object *p_object) {}
-	virtual bool handles(Object *p_object) const { return false; }
-	virtual void make_visible(bool p_visible) {}
-	void fix_ids(Variant param);
+	void spawn();
+	virtual void _spawn();
 
-	ESSEditorPlugin(EditorNode *p_node);
-	~ESSEditorPlugin();
+	void emit_on_entity_spawned(const Ref<EntityCreateInfo> &p_info);
+
+	ESSEntityWorldSpawner3D();
+	~ESSEntityWorldSpawner3D();
 
 protected:
 	static void _bind_methods();
-
-	EditorNode *editor;
-
-	Ref<WorldSpawner3DSpatialGizmoPlugin> gizmo_plugin;
-};
-
-class WorldSpawner3DSpatialGizmoPlugin : public EditorSpatialGizmoPlugin {
-	GDCLASS(WorldSpawner3DSpatialGizmoPlugin, EditorSpatialGizmoPlugin);
-
-public:
-	bool has_gizmo(Spatial *p_spatial);
-	String get_gizmo_name() const;
-	int get_priority() const;
-	bool can_be_hidden() const;
-	void redraw(EditorSpatialGizmo *p_gizmo);
-
-	String get_handle_name(const EditorSpatialGizmo *p_gizmo, int p_id, bool p_secondary) const;
-	Variant get_handle_value(EditorSpatialGizmo *p_gizmo, int p_id, bool p_secondary) const;
-	void set_handle(EditorSpatialGizmo *p_gizmo, int p_id, bool p_secondary, Camera *p_camera, const Point2 &p_point);
-	void commit_handle(EditorSpatialGizmo *p_gizmo, int p_id, bool p_secondary, const Variant &p_restore, bool p_cancel = false);
-
-	WorldSpawner3DSpatialGizmoPlugin();
 };
 
 #endif
