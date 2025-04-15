@@ -1,8 +1,5 @@
-#ifndef ESS_EDITOR_PLUGIN_H
-#define ESS_EDITOR_PLUGIN_H
-
 /*************************************************************************/
-/*  ess_editor_plugin.h                                                  */
+/*  ess_entity_world_spawner_2d.cpp                                      */
 /*************************************************************************/
 /*                         This file is part of:                         */
 /*                          PANDEMONIUM ENGINE                           */
@@ -32,51 +29,31 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                */
 /*************************************************************************/
 
-#include "editor/editor_node.h"
-#include "editor/editor_plugin.h"
+#include "ess_entity_world_spawner_2d.h"
 
-#include "editor/spatial_editor_gizmos.h"
+#include "../utility/entity_create_info.h"
 
-class WorldSpawner3DSpatialGizmoPlugin;
+void ESSEntityWorldSpawner2D::spawn() {
+	call("_spawn");
+}
+void ESSEntityWorldSpawner2D::_spawn() {
+}
 
-class ESSEditorPlugin : public EditorPlugin {
-	GDCLASS(ESSEditorPlugin, EditorPlugin);
+void ESSEntityWorldSpawner2D::emit_on_entity_spawned(const Ref<EntityCreateInfo> &p_info) {
+	emit_signal("on_entity_spawned", p_info);
+}
 
-public:
-	virtual String get_name() const { return "ESSEditorPlugin"; }
-	bool has_main_screen() const { return false; }
-	virtual void edit(Object *p_object) {}
-	virtual bool handles(Object *p_object) const { return false; }
-	virtual void make_visible(bool p_visible) {}
-	void fix_ids(Variant param);
+ESSEntityWorldSpawner2D::ESSEntityWorldSpawner2D() {
+}
 
-	ESSEditorPlugin(EditorNode *p_node);
-	~ESSEditorPlugin();
+ESSEntityWorldSpawner2D::~ESSEntityWorldSpawner2D() {
+}
 
-protected:
-	static void _bind_methods();
+void ESSEntityWorldSpawner2D::_bind_methods() {
+	BIND_VMETHOD(MethodInfo("_spawn"));
+	ADD_SIGNAL(MethodInfo("emit_on_entity_spawned", PropertyInfo(Variant::OBJECT, "info", PROPERTY_HINT_RESOURCE_TYPE, "EntityCreateInfo")));
 
-	EditorNode *editor;
-
-	Ref<WorldSpawner3DSpatialGizmoPlugin> gizmo_plugin;
-};
-
-class WorldSpawner3DSpatialGizmoPlugin : public EditorSpatialGizmoPlugin {
-	GDCLASS(WorldSpawner3DSpatialGizmoPlugin, EditorSpatialGizmoPlugin);
-
-public:
-	bool has_gizmo(Spatial *p_spatial);
-	String get_gizmo_name() const;
-	int get_priority() const;
-	bool can_be_hidden() const;
-	void redraw(EditorSpatialGizmo *p_gizmo);
-
-	String get_handle_name(const EditorSpatialGizmo *p_gizmo, int p_id, bool p_secondary) const;
-	Variant get_handle_value(EditorSpatialGizmo *p_gizmo, int p_id, bool p_secondary) const;
-	void set_handle(EditorSpatialGizmo *p_gizmo, int p_id, bool p_secondary, Camera *p_camera, const Point2 &p_point);
-	void commit_handle(EditorSpatialGizmo *p_gizmo, int p_id, bool p_secondary, const Variant &p_restore, bool p_cancel = false);
-
-	WorldSpawner3DSpatialGizmoPlugin();
-};
-
-#endif
+	ClassDB::bind_method(D_METHOD("spawn"), &ESSEntityWorldSpawner2D::spawn);
+	ClassDB::bind_method(D_METHOD("_spawn"), &ESSEntityWorldSpawner2D::_spawn);
+	ClassDB::bind_method(D_METHOD("emit_on_entity_spawned", "info"), &ESSEntityWorldSpawner2D::emit_on_entity_spawned);
+}

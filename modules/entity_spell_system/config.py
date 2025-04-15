@@ -105,6 +105,11 @@ def get_doc_classes():
 
         "ESSMaterialCache",
         "ESSMaterialCachePCM",
+
+        "ESSEntityWorldSpawner3D",
+        "ESSEntityWorldSpawner3DSingle",
+        "ESSEntityWorldSpawner3DArea",
+        "ESSEntityWorldSpawner2D",
     ]
 
 def get_doc_path():

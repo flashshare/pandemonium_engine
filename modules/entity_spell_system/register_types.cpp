@@ -132,7 +132,9 @@
 
 #include "singletons/profile_manager.h"
 
+#ifdef TOOLS_ENABLED
 #include "editor/ess_editor_plugin.h"
+#endif
 
 #include "database/ess_resource_db.cpp"
 #include "database/ess_resource_db_folders.h"
@@ -150,6 +152,11 @@
 #ifdef MODULE_PROPS_ENABLED
 #include "props/prop_data_entity.h"
 #endif
+
+#include "world_spawners/ess_entity_world_spawner_2d.cpp"
+#include "world_spawners/ess_entity_world_spawner_3d_single.cpp"
+#include "world_spawners/ess_entity_world_spawner_3d_area.h"
+#include "world_spawners/ess_entity_world_spawner_3d.cpp"
 
 static ESS *entity_data_manager = NULL;
 static ProfileManager *profile_manager = NULL;
@@ -294,12 +301,18 @@ void register_entity_spell_system_types(ModuleRegistrationLevel p_level) {
 #ifdef MODULE_TEXTURE_PACKER_ENABLED
 		ClassDB::register_class<ESSMaterialCachePCM>();
 #endif
+
+		// World Spawners
+		ClassDB::register_class<ESSEntityWorldSpawner3D>();
+		ClassDB::register_class<ESSEntityWorldSpawner3DSingle>();
+		ClassDB::register_class<ESSEntityWorldSpawner3DArea>();
+		ClassDB::register_class<ESSEntityWorldSpawner2D>();
 	}
 
 #ifdef TOOLS_ENABLED
-	//if (p_level == MODULE_REGISTRATION_LEVEL_EDITOR) {
-	//EditorPlugins::add_by_type<ESSEditorPlugin>();
-	//}
+	if (p_level == MODULE_REGISTRATION_LEVEL_EDITOR) {
+		EditorPlugins::add_by_type<ESSEditorPlugin>();
+	}
 #endif
 }
 
