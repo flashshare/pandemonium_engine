@@ -1,8 +1,8 @@
-#ifndef USER_MANAGER_DB_H
-#define USER_MANAGER_DB_H
+#ifndef PROP_DATA_ESS_ENTITY_WORLD_SPAWNER_3D_H
+#define PROP_DATA_ESS_ENTITY_WORLD_SPAWNER_3D_H
 
 /*************************************************************************/
-/*  user_manager_db.h                                                    */
+/*  prop_data_ess_entity_world_spawner_3d.h                              */
 /*************************************************************************/
 /*                         This file is part of:                         */
 /*                          PANDEMONIUM ENGINE                           */
@@ -32,69 +32,21 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                */
 /*************************************************************************/
 
-#include "core/containers/vector.h"
-#include "core/object/reference.h"
-#include "core/os/rw_lock.h"
-#include "core/string/ustring.h"
+#include "../../props/props/prop_data_entry.h"
 
-#include "user_manager.h"
-
-class User;
-class Database;
-class TableBuilder;
-class QueryBuilder;
-class DatabaseConnection;
-
-class UserManagerDB : public UserManager {
-	GDCLASS(UserManagerDB, UserManager);
+class PropDataESSEntityWorldSpawner3D : public PropDataEntry {
+	GDCLASS(PropDataESSEntityWorldSpawner3D, PropDataEntry);
 
 public:
-	String get_database_table_name();
-	void set_database_table_name(const String &val);
+	bool _processor_handles(Node *node) { return false; }
 
-	Ref<Database> get_database();
-	void set_database(const Ref<Database> &db);
-
-	Ref<DatabaseConnection> get_database_connection();
-	Ref<TableBuilder> get_table_builder();
-	Ref<QueryBuilder> get_query_builder();
-
-	Ref<User> _get_user(const int id);
-	Ref<User> _get_user_name(const String &user);
-	Ref<User> _get_user_email(const String &user_email);
-
-	void _save_user(Ref<User> user);
-
-	Ref<User> _create_user(Ref<User> p_user);
-
-	bool _is_username_taken(const String &user_name);
-	bool _is_email_taken(const String &email);
-
-	Array _get_all_users();
-
-	void create_table();
-	void drop_table();
-	void update_table(const int p_current_table_version);
-	void create_default_entries(const int p_seed);
-
-	virtual void _create_table();
-	virtual void _drop_table();
-	virtual void _update_table(const int p_current_table_version);
-	virtual void _create_default_entries(const int p_seed);
-
-	void migrate(const bool p_clear, const bool p_should_seed, const int p_seed);
-	virtual void _migrate(const bool p_clear, const bool p_should_seed, const int p_seed);
-
-	UserManagerDB();
-	~UserManagerDB();
+	PropDataESSEntityWorldSpawner3D();
+	~PropDataESSEntityWorldSpawner3D();
 
 protected:
-	void _notification(const int what);
-
 	static void _bind_methods();
 
-	String _database_table_name;
-	Ref<Database> _database;
+private:
 };
 
 #endif

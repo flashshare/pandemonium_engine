@@ -75,6 +75,7 @@ class ToolButton;
 class TreeItem;
 class Variant;
 struct Vector2;
+class SceneState;
 
 class SceneTreeDock : public VBoxContainer {
 	GDCLASS(SceneTreeDock, VBoxContainer);
@@ -111,6 +112,8 @@ class SceneTreeDock : public VBoxContainer {
 		TOOL_SCENE_USE_PLACEHOLDER,
 		TOOL_SCENE_MAKE_LOCAL,
 		TOOL_SCENE_OPEN,
+		TOOL_SCENE_MERGE_LOCAL_CHANGES_INTO_PACKEDSCENE,
+		TOOL_SCENE_MERGE_LOCAL_CHANGES_INTO_PACKEDSCENE_NO_TRANSFORM,
 		TOOL_SCENE_CLEAR_INHERITANCE,
 		TOOL_SCENE_CLEAR_INHERITANCE_CONFIRM,
 		TOOL_SCENE_OPEN_INHERITED,
@@ -293,6 +296,9 @@ class SceneTreeDock : public VBoxContainer {
 
 	bool _update_node_path(Node *p_root_node, NodePath &r_node_path, RBMap<Node *, NodePath> *p_renames) const;
 	bool _check_node_path_recursive(Node *p_root_node, Variant &r_variant, RBMap<Node *, NodePath> *p_renames) const;
+
+	void _swap_packedscene_on_disk(const Ref<PackedScene> &p_packed_scene, const String &p_path);
+	void _replace_packed_scene_state(Ref<PackedScene> p_packed_scene, const Ref<SceneState> &p_scene_state, const String &p_path);
 
 	struct CustomSceneRootClassEntry {
 		int id;
