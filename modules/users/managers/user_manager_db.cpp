@@ -246,14 +246,15 @@ void UserManagerDB::_save_user(Ref<User> user) {
 		b->run_query();
 	}
 }
-Ref<User> UserManagerDB::_create_user() {
-	Ref<User> u;
-	u.instance();
+Ref<User> UserManagerDB::_create_user(Ref<User> p_user) {
+	if (!p_user.is_valid()) {
+		p_user.instance();
+	}
 
 	//save_user(u);
-	u->connect("changed", this, "_save_user", varray(u));
+	p_user->connect("changed", this, "_save_user", varray(p_user));
 
-	return u;
+	return p_user;
 }
 bool UserManagerDB::_is_username_taken(const String &user_name) {
 	Ref<QueryBuilder> b = get_query_builder();
@@ -272,38 +273,6 @@ bool UserManagerDB::_is_email_taken(const String &email) {
 	Ref<QueryResult> r = b->run();
 
 	return r->next_row();
-}
-
-Vector<Ref<User>> UserManagerDB::get_all_as_vector() {
-	Ref<QueryBuilder> b = get_query_builder();
-
-	b->select("id, username, email, rank, pre_salt, post_salt, password_hash, banned, password_reset_token, locked");
-	b->from(_database_table_name);
-	b->end_command();
-	// b->print();
-
-	Vector<Ref<User>> users;
-
-	Ref<QueryResult> r = b->run();
-
-	while (r->next_row()) {
-		Ref<User> user = create_user();
-
-		user->set_user_id(r->get_cell_int(0));
-		user->set_user_name(r->get_cell(1));
-		user->set_email(r->get_cell(2));
-		user->set_rank(r->get_cell_int(3));
-		user->set_pre_salt(r->get_cell(4));
-		user->set_post_salt(r->get_cell(5));
-		user->set_password_hash(r->get_cell(6));
-		user->set_banned(r->get_cell_bool(7));
-		user->set_password_reset_token(r->get_cell(8));
-		user->set_locked(r->get_cell_bool(9));
-
-		users.push_back(user);
-	}
-
-	return users;
 }
 
 Array UserManagerDB::_get_all_users() {

@@ -168,9 +168,6 @@ public:
 	void draw_debug_voxel_lights();
 	void draw_debug_mdr_colliders();
 
-	//Visibility
-	void visibility_changed(bool visible);
-
 	//free
 	void free_chunk();
 
@@ -192,6 +189,7 @@ protected:
 
 	virtual void _visibility_changed(bool visible);
 
+	virtual void _enter_tree();
 	virtual void _exit_tree();
 	virtual void _world_transform_changed();
 
