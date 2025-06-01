@@ -30,6 +30,8 @@
 /*************************************************************************/
 
 #include "user.h"
+#include "../managers/user_manager.h"
+#include "../singleton/user_db.h"
 #include "core/io/json.h"
 #include "core/object/class_db.h"
 
@@ -47,6 +49,11 @@ String User::get_user_name() const {
 }
 void User::set_user_name(const String &val) {
 	_user_name = val;
+
+	_user_name_internal = string_to_internal_format(_user_name);
+}
+String User::get_user_name_internal() const {
+	return _user_name_internal;
 }
 
 String User::get_email() const {
@@ -54,6 +61,11 @@ String User::get_email() const {
 }
 void User::set_email(const String &val) {
 	_email = val;
+
+	_email_internal = string_to_internal_format(_email);
+}
+String User::get_email_internal() const {
+	return _email_internal;
 }
 
 int User::get_rank() const {
@@ -195,6 +207,10 @@ void User::from_dict(const Dictionary &dict) {
 }
 
 Dictionary User::_to_dict() {
+	// RW Lock writes are not re-entrant (read locking would work), but since concurrency is hard
+	// api consistency is important. These types of classes hould always be locked from the outside.
+	// Use read_lock() in the caller and then do all read operations that you want.
+
 	Dictionary dict;
 
 	dict["user_id"] = _user_id;
@@ -216,8 +232,12 @@ Dictionary User::_to_dict() {
 		if (m.is_valid()) {
 			Dictionary mdict;
 
+			// Call read lock from the outside
+			m->read_lock();
 			mdict["index"] = i;
+			mdict["module_name"] = m->get_module_name();
 			mdict["data"] = m->to_dict();
+			m->read_unlock();
 
 			marr.push_back(mdict);
 		}
@@ -228,9 +248,14 @@ Dictionary User::_to_dict() {
 	return dict;
 }
 void User::_from_dict(const Dictionary &dict) {
+	// RW Locks are not re-entrant, so no write_lock() here.
+	// Use write_lock() in the caller and do all write operations that you want if you need concurrency.
+	// This is the only way to properly preserve atomicity.
+
 	_user_id = dict["user_id"];
-	_user_name = dict["user_name"];
-	_email = dict["email"];
+	// Use setters here these set other cached state too
+	set_user_name(dict["user_name"]);
+	set_email(dict["email"]);
 	_rank = dict["rank"];
 	_pre_salt = dict["pre_salt"];
 	_post_salt = dict["post_salt"];
@@ -244,19 +269,30 @@ void User::_from_dict(const Dictionary &dict) {
 	for (int i = 0; i < marr.size(); ++i) {
 		Dictionary mdict = marr[i];
 
-		if (!mdict.has("index") || !mdict.has("data")) {
-			continue;
+		String module_name;
+
+		if (mdict.has("module_name")) {
+			module_name = mdict["module_name"];
 		}
 
-		int index = mdict["index"];
-		
-		ERR_CONTINUE(index < 0 || index >= _modules.size());
-		
-		Ref<UserModule> m = _modules[index];
+		Ref<UserModule> m;
+
+		if (module_name.empty()) {
+			int index = mdict["index"];
+
+			ERR_CONTINUE(index < 0 || index >= _modules.size());
+
+			m = _modules[index];
+		} else {
+			m = get_module_named(module_name);
+		}
 
 		ERR_CONTINUE(!m.is_valid());
 
+		// Call write lock from the outside
+		m->write_lock();
 		m->from_dict(mdict["data"]);
+		m->write_unlock();
 	}
 }
 
@@ -278,7 +314,17 @@ void User::from_json(const String &data) {
 }
 
 void User::save() {
-	emit_changed();
+	if (_owner_user_manager == ObjectID()) {
+		// Fallback, owner was not set. Maybe should just complain instead?
+		UserDB::get_singleton()->save_user(Ref<User>(this));
+		return;
+	}
+
+	UserManager *owner_user_manager = ObjectDB::get_instance<UserManager>(_owner_user_manager);
+
+	ERR_FAIL_COND(!owner_user_manager);
+
+	owner_user_manager->save_user(Ref<User>(this));
 }
 
 void User::read_lock() {
@@ -293,12 +339,38 @@ void User::write_lock() {
 void User::write_unlock() {
 	_rw_lock.write_unlock();
 }
+Error User::read_try_lock() {
+	return _rw_lock.read_try_lock();
+}
+Error User::write_try_lock() {
+	return _rw_lock.write_try_lock();
+}
+
+UserManager *User::get_owner_user_manager() {
+	return ObjectDB::get_instance<UserManager>(_owner_user_manager);
+}
+void User::set_owner_user_manager(UserManager *p_user_manager) {
+	if (!p_user_manager) {
+		_owner_user_manager = ObjectID();
+		return;
+	}
+
+	_owner_user_manager = p_user_manager->get_instance_id();
+}
+void User::set_owner_user_manager_bind(Node *p_user_manager) {
+	set_owner_user_manager(Object::cast_to<UserManager>(p_user_manager));
+}
+
+String User::string_to_internal_format(const String &p_str) {
+	return p_str.strip_edges().to_lower();
+}
 
 User::User() {
 	_user_id = -1;
 	_rank = 0;
 	_banned = false;
 	_locked = false;
+	_owner_user_manager = ObjectID();
 }
 
 User::~User() {
@@ -323,6 +395,9 @@ void User::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_email"), &User::get_email);
 	ClassDB::bind_method(D_METHOD("set_email", "val"), &User::set_email);
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "email"), "set_email", "get_email");
+
+	ClassDB::bind_method(D_METHOD("get_user_name_internal"), &User::get_user_name_internal);
+	ClassDB::bind_method(D_METHOD("get_email_internal"), &User::get_email_internal);
 
 	ClassDB::bind_method(D_METHOD("get_rank"), &User::get_rank);
 	ClassDB::bind_method(D_METHOD("set_rank", "val"), &User::set_rank);
@@ -390,11 +465,12 @@ void User::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("read_unlock"), &User::read_unlock);
 	ClassDB::bind_method(D_METHOD("write_lock"), &User::write_lock);
 	ClassDB::bind_method(D_METHOD("write_unlock"), &User::write_unlock);
+	ClassDB::bind_method(D_METHOD("read_try_lock"), &User::read_try_lock);
+	ClassDB::bind_method(D_METHOD("write_try_lock"), &User::write_try_lock);
 
-	BIND_ENUM_CONSTANT(PERMISSION_CREATE);
-	BIND_ENUM_CONSTANT(PERMISSION_READ);
-	BIND_ENUM_CONSTANT(PERMISSION_UPDATE);
-	BIND_ENUM_CONSTANT(PERMISSION_DELETE);
-	BIND_ENUM_CONSTANT(PERMISSION_ALL);
-	BIND_ENUM_CONSTANT(PERMISSION_NONE);
+	// No property. Changing this should not really happen normally, only during more advanced uses.
+	ClassDB::bind_method(D_METHOD("get_owner_user_manager"), &User::get_owner_user_manager);
+	ClassDB::bind_method(D_METHOD("set_owner_user_manager", "user_manager"), &User::set_owner_user_manager_bind);
+
+	ClassDB::bind_method(D_METHOD("string_to_internal_format", "str"), &User::string_to_internal_format_bind);
 }

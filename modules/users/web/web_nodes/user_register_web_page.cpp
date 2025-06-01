@@ -38,11 +38,9 @@
 #include "modules/web/html/form_validator.h"
 #include "modules/web/html/html_builder.h"
 #include "modules/web/http/http_server_enums.h"
-#include "modules/web/http/http_session.h"
 #include "modules/web/http/http_session_manager.h"
 #include "modules/web/http/web_permission.h"
 #include "modules/web/http/web_server.h"
-#include "modules/web/http/web_server_cookie.h"
 #include "modules/web/http/web_server_request.h"
 
 String UserRegisterWebPage::get_redirect_on_success_url() {
@@ -66,9 +64,6 @@ void UserRegisterWebPage::_render_index(Ref<WebServerRequest> request) {
 		data.email_val = request->get_parameter("email");
 		data.pass_val = request->get_parameter("password");
 		data.pass_check_val = request->get_parameter("password_check");
-
-		// todo username length etc check
-		// todo pw length etc check
 
 		if (UserDB::get_singleton()->is_username_taken(data.uname_val)) {
 			data.error_str += "Username already taken!<br>";
@@ -213,8 +208,9 @@ UserRegisterWebPage::UserRegisterWebPage() {
 	pw->need_to_exist();
 	pw->need_to_have_lowercase_character()->need_to_have_uppercase_character();
 	pw->need_minimum_length(5);
+	pw->need_maximum_length(256);
 
-	_registration_validator->new_field("password_check", "Password check")->need_to_match("password");
+	_registration_validator->new_field("password_check", "Password check")->need_maximum_length(256)->need_to_match("password");
 
 	_registration_validator->new_field("email", "Email")->need_to_exist()->need_to_be_email();
 

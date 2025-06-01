@@ -38,11 +38,9 @@
 #include "modules/web/html/form_validator.h"
 #include "modules/web/html/html_builder.h"
 #include "modules/web/http/http_server_enums.h"
-#include "modules/web/http/http_session.h"
 #include "modules/web/http/http_session_manager.h"
 #include "modules/web/http/web_permission.h"
 #include "modules/web/http/web_server.h"
-#include "modules/web/http/web_server_cookie.h"
 #include "modules/web/http/web_server_request.h"
 
 void UserSettingsWebPage::_render_index(Ref<WebServerRequest> request) {
@@ -67,6 +65,8 @@ void UserSettingsWebPage::_render_index(Ref<WebServerRequest> request) {
 		}
 
 		if (errors.size() == 0) {
+			user->write_lock();
+			
 			if (data.uname_val == user->get_user_name()) {
 				data.uname_val = "";
 			}
@@ -74,12 +74,12 @@ void UserSettingsWebPage::_render_index(Ref<WebServerRequest> request) {
 			if (data.email_val == user->get_email()) {
 				data.email_val = "";
 			}
+			
 
 			if (data.uname_val != "") {
 				if (UserDB::get_singleton()->is_username_taken(data.uname_val)) {
 					data.error_str += "Username already taken!<br>";
 				} else {
-					// todo sanitize for html special chars!
 					user->set_user_name(data.uname_val);
 					changed = true;
 					data.uname_val = "";
@@ -90,8 +90,6 @@ void UserSettingsWebPage::_render_index(Ref<WebServerRequest> request) {
 				if (UserDB::get_singleton()->is_email_taken(data.email_val)) {
 					data.error_str += "Email already in use!<br>";
 				} else {
-					// todo sanitize for html special chars!
-					// also send email
 					user->set_email(data.email_val);
 					changed = true;
 					data.email_val = "";
@@ -107,6 +105,8 @@ void UserSettingsWebPage::_render_index(Ref<WebServerRequest> request) {
 					changed = true;
 				}
 			}
+			
+			user->write_unlock();
 
 			if (changed) {
 				user->save();
@@ -200,8 +200,9 @@ UserSettingsWebPage::UserSettingsWebPage() {
 	pw->ignore_if_not_exists();
 	pw->need_to_have_lowercase_character()->need_to_have_uppercase_character();
 	pw->need_minimum_length(5);
+	pw->need_maximum_length(256);
 
-	_profile_validator->new_field("password_check", "Password check")->ignore_if_other_field_not_exists("password")->need_to_match("password");
+	_profile_validator->new_field("password_check", "Password check")->ignore_if_other_field_not_exists("password")->need_maximum_length(256)->need_to_match("password");
 }
 
 UserSettingsWebPage::~UserSettingsWebPage() {
