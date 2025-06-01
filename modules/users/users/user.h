@@ -38,29 +38,22 @@
 #include "core/object/resource.h"
 
 class UserModule;
+class UserManager;
 
 class User : public Resource {
 	GDCLASS(User, Resource);
 
 public:
-	enum Permissions {
-		PERMISSION_CREATE = 1 << 0,
-		PERMISSION_READ = 1 << 1,
-		PERMISSION_UPDATE = 1 << 2,
-		PERMISSION_DELETE = 1 << 3,
-
-		PERMISSION_ALL = PERMISSION_CREATE | PERMISSION_READ | PERMISSION_UPDATE | PERMISSION_DELETE,
-		PERMISSION_NONE = 0
-	};
-
 	int get_user_id() const;
 	void set_user_id(const int val);
 
 	String get_user_name() const;
 	void set_user_name(const String &val);
+	String get_user_name_internal() const;
 
 	String get_email() const;
 	void set_email(const String &val);
+	String get_email_internal() const;
 
 	int get_rank() const;
 	void set_rank(const int val);
@@ -115,6 +108,17 @@ public:
 	void read_unlock();
 	void write_lock();
 	void write_unlock();
+	Error read_try_lock();
+	Error write_try_lock();
+
+	UserManager *get_owner_user_manager();
+	void set_owner_user_manager(UserManager *p_user_manager);
+	void set_owner_user_manager_bind(Node *p_user_manager);
+
+	static String string_to_internal_format(const String &p_str);
+	String string_to_internal_format_bind(const String &p_str) const {
+		return string_to_internal_format(p_str);
+	}
 
 	User();
 	~User();
@@ -133,11 +137,14 @@ protected:
 	String _password_reset_token;
 	bool _locked;
 
+	String _user_name_internal;
+	String _email_internal;
+
 	Vector<Ref<UserModule>> _modules;
 
 	RWLock _rw_lock;
-};
 
-VARIANT_ENUM_CAST(User::Permissions);
+	ObjectID _owner_user_manager;
+};
 
 #endif

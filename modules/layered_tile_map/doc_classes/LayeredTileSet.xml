@@ -12,13 +12,8 @@
 		See the functions to add new layers for more information.
 	</description>
 	<tutorials>
-		<link title="Using Tilemaps">$DOCS_URL/tutorials/2d/using_tilemaps.html</link>
-		<link title="2D Platformer Demo">https://godotengine.org/asset-library/asset/120</link>
-		<link title="2D Isometric Demo">https://godotengine.org/asset-library/asset/112</link>
-		<link title="2D Hexagonal Demo">https://godotengine.org/asset-library/asset/111</link>
-		<link title="2D Navigation Astar Demo">https://godotengine.org/asset-library/asset/519</link>
-		<link title="2D Role Playing Game Demo">https://godotengine.org/asset-library/asset/520</link>
-		<link title="2D Kinematic Character Demo">https://godotengine.org/asset-library/asset/113</link>
+		<link title="Using Tilemaps">$DOCS_URL/04_modules/layered_tile_maps/01_using_tilesets.md</link>
+		<link title="Layered Tile Map Demo Index">$DOCS_URL/07_demo_projects/2d/layered_tile_maps</link>
 	</tutorials>
 	<methods>
 		<method name="add_avoidance_layer">
