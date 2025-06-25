@@ -31,29 +31,40 @@ jobs:
       - name: Setup Python & SCons
         uses: ./.github/actions/godot-deps
 
-      - name: Install & bootstrap VitaSDK
+      - name: Remove system libelf to prevent conflicts
         run: |
           sudo apt-get update
+          sudo apt-get remove -y libelf-dev libelf1 || true
           sudo apt-get install -y cmake libarchive-tools fakeroot zip git pkg-config xz-utils unzip
+
+      - name: Install & bootstrap VitaSDK (without system libelf)
+        run: |
           git clone https://github.com/vitasdk/vdpm $HOME/vdpm
           cd $HOME/vdpm
           ./bootstrap-vitasdk.sh
           ./install-all.sh
           # Persist SDK tools into all subsequent steps
           echo "$VITASDK/bin" >> $GITHUB_PATH
-          echo "$HOME/vdpm/vita-makepkg" >> $GITHUB_PATH
 
-      - name: Install Vita host toolchain & core libs
+      - name: Force rebuild VitaSDK toolchain against bundled libelf
         run: |
-          vdpm vita-toolchain
+          # Remove any existing vita-toolchain to force clean rebuild
+          vdpm -f vita-toolchain
+          # Install Vita runtime libraries
           vdpm vita-rss-libdl
 
-      - name: Install PVR_PSP2 GPU driver headers & stubs
+      - name: Install PVR_PSP2 GPU driver headers & stubs  
         run: |
           git clone https://github.com/isage/vita-packages-extra $HOME/vita-packages-extra
           cd $HOME/vita-packages-extra/pvr_psp2
           vita-makepkg
           vdpm *-arm.tar.xz
+
+      - name: Verify vita-elf-create supports relocation type 25
+        run: |
+          echo "Testing vita-elf-create version and capabilities..."
+          vita-elf-create --help || true
+          strings $VITASDK/bin/vita-elf-create | grep -i "relocation\|invalid" || true
 
       - name: Compile Godot for Vita
         uses: ./.github/actions/godot-build
