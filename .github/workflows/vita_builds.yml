@@ -1,13 +1,15 @@
+#
+# This workflow builds the PlayStation Vita export template for the Pandemonium engine.
+# It uses the official vitasdk/setup-vitasdk action for a reliable and up-to-date toolchain.
+#
 name: 🎮 PSVita Builds
+on: [push, pull_request]
 
-on:
-  push:
-  pull_request:
-
+# Global Settings
 env:
   GODOT_BASE_BRANCH: 3.x
   SCONSFLAGS: verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=True
-  VITASDK: /usr/local/vitasdk
+  # The VITASDK env var is set automatically by the setup-vitasdk action.
 
 concurrency:
   group: ci-${{ github.actor }}-${{ github.head_ref || github.run_number }}-${{ github.ref }}-vita
@@ -16,13 +18,14 @@ concurrency:
 jobs:
   vita-template:
     name: Template (target=release, tools=no)
-    runs-on: ubuntu-24.04
+    # Changed to the more stable and widely compatible ubuntu-22.04 runner.
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: recursive # Important: Ensures all engine submodules are checked out.
 
       - name: Restore Godot build cache
         uses: ./.github/actions/godot-cache-restore
@@ -31,26 +34,10 @@ jobs:
       - name: Setup Python & SCons
         uses: ./.github/actions/godot-deps
 
+      # This step uses the official, maintained action to set up the entire
+      # VitaSDK toolchain, including necessary libraries like pvr_psp2.
       - name: Setup VitaSDK toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake libarchive-tools fakeroot zip git pkg-config
-          git clone https://github.com/vitasdk/vdpm $HOME/vdpm
-          cd $HOME/vdpm
-          ./bootstrap-vitasdk.sh
-          ./install-all.sh
-          export PATH=$VITASDK/bin:$PATH
-          # Install/update the VitaSDK host tools (with patched vita-elf-create)
-          vdpm vita-toolchain
-          # Install core Vita runtime libraries
-          vdpm vita-rss-libdl
-
-      - name: Install PVR_PSP2 GPU driver headers & stubs
-        run: |
-          git clone https://github.com/isage/vita-packages-extra $HOME/vita-packages-extra
-          cd $HOME/vita-packages-extra/pvr_psp2
-          vita-makepkg
-          vdpm *-arm.tar.xz
+        uses: vitasdk/setup-vitasdk@v4
 
       - name: Compile Godot for Vita
         uses: ./.github/actions/godot-build
@@ -70,5 +57,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: godot-vita-release
-          path: temp-build/vita_release.velf
-          overwrite: true
+          path: bin/pandemonium.vita.opt.velf # The correct path for the final artifact
+          if-no-files-found: error # Fail the workflow if the build artifact is missing
+
