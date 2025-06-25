@@ -1,30 +1,28 @@
-#
-# This workflow builds the PlayStation Vita export template for the Pandemonium engine.
-# It uses the official vitasdk/setup-vitasdk action for a reliable and up-to-date toolchain.
-#
 name: 🎮 PSVita Builds
-on: [push, pull_request]
 
-# Global Settings
+on:
+  push:
+  pull_request:
+
 env:
   GODOT_BASE_BRANCH: 3.x
   SCONSFLAGS: verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=True
-  # The VITASDK env var is now set automatically by the setup-vitasdk action.
+  VITASDK: /usr/local/vitasdk
 
 concurrency:
-  group: ci-${{github.actor}}-${{github.head_ref || github.run_number}}-${{github.ref}}-vita
+  group: ci-${{ github.actor }}-${{ github.head_ref || github.run_number }}-${{ github.ref }}-vita
   cancel-in-progress: true
 
 jobs:
   vita-template:
-    runs-on: "ubuntu-24.04"
     name: Template (target=release, tools=no)
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          submodules: recursive # Important: Ensures all engine submodules are checked out.
+          submodules: recursive
 
       - name: Restore Godot build cache
         uses: ./.github/actions/godot-cache-restore
@@ -33,12 +31,20 @@ jobs:
       - name: Setup python and scons
         uses: ./.github/actions/godot-deps
 
-      # This is the corrected step. It replaces the old manual script.
-      # The vitasdk/setup-vitasdk action downloads and configures the entire
-      # toolchain, including any necessary dependencies.
-      # Updated to @v4 as @v2 is no longer resolved.
-      - name: Setup VitaSDK
-        uses: vitasdk/setup-vitasdk@v4
+      - name: Setup VitaSDK toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libarchive-tools fakeroot zip git
+          git clone https://github.com/vitasdk/vdpm $HOME/vdpm
+          cd $HOME/vdpm
+          ./bootstrap-vitasdk.sh
+          ./install-all.sh
+          export PATH=$VITASDK/bin:$PATH
+          # Install updated VitaSDK host tools (including patched vita-elf-create)
+          vdpm vita-toolchain
+          # Install any additional PS Vita libraries
+          vdpm vita-rss-libdl
+          vdpm pvr_psp2
 
       - name: Compilation
         uses: ./.github/actions/godot-build
@@ -51,11 +57,11 @@ jobs:
       - name: Save Godot build cache
         uses: ./.github/actions/godot-cache-save
         with:
-          # Assuming cache-name is defined elsewhere or this is a snippet.
-          # If not, you might need to define it, e.g., cache-name: vita-cache
-          cache-name: ${{ matrix.cache-name }}
+          cache-name: ${{ github.workflow }}-vita
         continue-on-error: true
 
       - name: Upload artifact
-        uses: ./.github/actions/upload-artifact
-
+        uses: actions/upload-artifact@v3
+        with:
+          name: godot-vita-release
+          path: temp-build/vita_release.velf
