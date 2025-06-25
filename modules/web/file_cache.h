@@ -33,11 +33,12 @@
 /*************************************************************************/
 
 #include "core/containers/hash_map.h"
-#include "core/containers/rb_map.h"
+#include "core/containers/hash_map.h"
 #include "core/containers/vector.h"
 #include "core/os/os.h"
 #include "core/os/rw_lock.h"
 #include "core/string/ustring.h"
+#include "core/string/string_name.h"
 
 #include "core/object/reference.h"
 
@@ -50,27 +51,33 @@ public:
 
 	String get_wwwroot_abs();
 
-	int get_cache_invalidation_time();
-	void set_cache_invalidation_time(const int &val);
+	uint64_t get_cache_invalidation_time();
+	void set_cache_invalidation_time(const uint64_t val);
 
 	//Note: file path should be the url you want to access the file with, including lead slash
 	//e.g. http://127.0.0.1/a/b/d.jpg -> /a/b/d.jpg
-	bool wwwroot_has_file(const String &file_path);
-	String wwwroot_get_file_abspath(const String &file_path);
+	bool wwwroot_has_file(const String &p_file_url_path);
+	String wwwroot_get_file_abspath(const String &p_file_url_path);
 
-	String wwwroot_get_simplified_abs_path(const String &file_path);
+	bool wwwroot_has_folder(const String &p_url_folder_path);
+	String wwwroot_get_folder_abspath(const String &p_url_folder_path);
 
-	bool get_cached_body(const String &path, String *body);
-	bool has_cached_body(const String &path);
-	String get_cached_body_bind(const String &path);
-	void set_cached_body(const String &path, const String &body);
+	bool wwwroot_path_exists(const String &p_url_path);
+
+	String wwwroot_get_simplified_abs_path(const String &p_url_path);
+
+	bool has_cached_body(const StringName &p_key);
+	String get_cached_body(const StringName &p_key);
+	void set_cached_body(const StringName &p_key, const String &p_body);
+	void remove_cached_body(const StringName &p_key);
+	List<StringName> get_cached_keys();
+	Array get_cached_keys_bind();
 
 	void clear();
+	void clear_expired();
 
 	FileCache();
 	~FileCache();
-
-	uint64_t cache_invalidation_time;
 
 protected:
 	static void _bind_methods();
@@ -78,6 +85,8 @@ protected:
 	String _wwwroot_orig;
 	String _wwwroot;
 	String _wwwroot_abs;
+
+	uint64_t _cache_invalidation_time;
 
 	struct CacheEntry {
 		uint64_t timestamp;
@@ -89,7 +98,7 @@ protected:
 	};
 
 	RWLock _body_lock;
-	RBMap<String, CacheEntry *> cache_map;
+	HashMap<StringName, CacheEntry> _cache_map;
 };
 
 #endif

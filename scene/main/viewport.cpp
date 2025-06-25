@@ -45,7 +45,6 @@
 #include "scene/3d/listener.h"
 #include "scene/gui/label.h"
 #include "scene/gui/menu_button.h"
-#include "scene/gui/panel.h"
 #include "scene/gui/panel_container.h"
 #include "scene/gui/popup_menu.h"
 #include "scene/gui/viewport_container.h"
@@ -53,7 +52,6 @@
 #include "scene/main/control.h"
 #include "scene/main/scene_string_names.h"
 #include "scene/main/spatial.h"
-#include "scene/main/timer.h"
 #include "scene/resources/mesh/mesh.h"
 #include "scene/resources/world_2d.h"
 #include "scene/resources/world_3d.h"
@@ -189,6 +187,7 @@ public:
 Viewport::GUI::GUI() {
 	dragging = false;
 	drag_successful = false;
+	mouse_in_window = true;
 	mouse_focus = nullptr;
 	mouse_click_grabber = nullptr;
 	mouse_focus_mask = 0;
@@ -393,21 +392,27 @@ void Viewport::_notification(int p_what) {
 				_process_picking(false);
 			}
 		} break;
+		case SceneTree::NOTIFICATION_WM_MOUSE_ENTER: {
+			gui.mouse_in_window = true;
+		} break;
 		case SceneTree::NOTIFICATION_WM_MOUSE_EXIT: {
+			gui.mouse_in_window = false;
 			_drop_physics_mouseover();
-
-			// Unlike on loss of focus (NOTIFICATION_WM_WINDOW_FOCUS_OUT), do not
-			// drop the gui mouseover here, as a scrollbar may be dragged while the
-			// mouse is outside the window (without the window having lost focus).
-			// See bug #39634
+			_drop_mouse_over();
+			_gui_cancel_tooltip();
+			// When the mouse exits the window, we want to end mouse_over, but
+			// not mouse_focus, because, for example, we want to continue
+			// dragging a scrollbar even if the mouse has left the window.
 		} break;
 		case SceneTree::NOTIFICATION_WM_FOCUS_OUT: {
 			_drop_physics_mouseover();
-
 			if (gui.mouse_focus) {
-				//if mouse is being pressed, send a release event
 				_drop_mouse_focus();
 			}
+			// When the window focus changes, we want to end mouse_focus, but
+			// not the mouse_over. Note: The OS will trigger a separate mouse
+			// exit event if the change in focus results in the mouse exiting
+			// the window.
 		} break;
 	}
 }
@@ -1803,9 +1808,6 @@ void Viewport::_gui_input_event(Ref<InputEvent> p_event) {
 
 	if (mb.is_valid()) {
 		gui.key_event_accepted = false;
-
-		Control *over = nullptr;
-
 		Point2 mpos = mb->get_position();
 		if (mb->is_pressed()) {
 			Size2 pos = mpos;
@@ -2000,6 +2002,8 @@ void Viewport::_gui_input_event(Ref<InputEvent> p_event) {
 			// it is different, rather than wait for it to be updated the next time the
 			// mouse is moved, notify the control so that it can e.g. drop the highlight.
 			// This code is duplicated from the mm.is_valid()-case further below.
+
+			Control *over = nullptr;
 			if (gui.mouse_focus) {
 				over = gui.mouse_focus;
 			} else {
@@ -2029,8 +2033,6 @@ void Viewport::_gui_input_event(Ref<InputEvent> p_event) {
 		Point2 mpos = mm->get_position();
 
 		gui.last_mouse_pos = mpos;
-
-		Control *over = nullptr;
 
 		// D&D
 		if (!gui.drag_attempted && gui.mouse_focus && mm->get_button_mask() & BUTTON_MASK_LEFT) {
@@ -2078,12 +2080,10 @@ void Viewport::_gui_input_event(Ref<InputEvent> p_event) {
 			}
 		}
 
-		// These sections of code are reused in the mb.is_valid() case further up
-		// for the purpose of notifying controls about potential changes in focus
-		// when the mousebutton is released.
+		Control *over = nullptr;
 		if (gui.mouse_focus) {
 			over = gui.mouse_focus;
-		} else {
+		} else if (gui.mouse_in_window) {
 			over = _gui_find_control(mpos);
 		}
 
@@ -2132,10 +2132,9 @@ void Viewport::_gui_input_event(Ref<InputEvent> p_event) {
 
 			if (over) {
 				_gui_call_notification(over, Control::NOTIFICATION_MOUSE_ENTER);
+				gui.mouse_over = over;
 			}
 		}
-
-		gui.mouse_over = over;
 
 		Control *drag_preview = _gui_get_drag_preview();
 		if (drag_preview) {
@@ -2601,7 +2600,7 @@ void Viewport::_gui_hid_control(Control *p_control) {
 	}
 
 	if (gui.key_focus == p_control) {
-		_gui_remove_focus();
+		gui_release_focus();
 	}
 	if (gui.mouse_over == p_control) {
 		gui.mouse_over = nullptr;
@@ -2633,11 +2632,12 @@ void Viewport::_gui_remove_control(Control *p_control) {
 	}
 }
 
-void Viewport::_gui_remove_focus() {
+void Viewport::gui_release_focus() {
 	if (gui.key_focus) {
-		Node *f = gui.key_focus;
+		Control *f = gui.key_focus;
 		gui.key_focus = nullptr;
 		f->notification(Control::NOTIFICATION_FOCUS_EXIT, true);
+		f->update();
 	}
 }
 
@@ -2654,7 +2654,7 @@ void Viewport::_gui_control_grab_focus(Control *p_control) {
 	if (gui.key_focus && gui.key_focus == p_control) {
 		return;
 	}
-	get_tree()->call_group_flags(SceneTree::GROUP_CALL_REALTIME, "_viewports", "_gui_remove_focus");
+	get_tree()->call_group_flags(SceneTree::GROUP_CALL_REALTIME, "_viewports", "gui_release_focus");
 	gui.key_focus = p_control;
 	emit_signal("gui_focus_changed", p_control);
 	p_control->notification(Control::NOTIFICATION_FOCUS_ENTER);
@@ -2752,8 +2752,12 @@ List<Control *>::Element *Viewport::_gui_show_modal(Control *p_control) {
 	return node;
 }
 
-Control *Viewport::_gui_get_focus_owner() {
+Control *Viewport::gui_get_focus_owner() const {
 	return gui.key_focus;
+}
+
+Control *Viewport::gui_get_hovered_control() const {
+	return gui.mouse_over;
 }
 
 void Viewport::_gui_grab_click_focus(Control *p_control) {
@@ -3232,6 +3236,10 @@ void Viewport::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("gui_is_dragging"), &Viewport::gui_is_dragging);
 	ClassDB::bind_method(D_METHOD("gui_is_drag_successful"), &Viewport::gui_is_drag_successful);
 
+	ClassDB::bind_method(D_METHOD("gui_release_focus"), &Viewport::gui_release_focus);
+	ClassDB::bind_method(D_METHOD("gui_get_focus_owner"), &Viewport::gui_get_focus_owner);
+	ClassDB::bind_method(D_METHOD("gui_get_hovered_control"), &Viewport::gui_get_hovered_control);
+
 	ClassDB::bind_method(D_METHOD("get_modal_stack_top"), &Viewport::get_modal_stack_top);
 
 	ClassDB::bind_method(D_METHOD("set_disable_input", "disable"), &Viewport::set_disable_input);
@@ -3244,7 +3252,6 @@ void Viewport::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_keep_3d_linear"), &Viewport::get_keep_3d_linear);
 
 	ClassDB::bind_method(D_METHOD("_gui_show_tooltip"), &Viewport::_gui_show_tooltip);
-	ClassDB::bind_method(D_METHOD("_gui_remove_focus"), &Viewport::_gui_remove_focus);
 	ClassDB::bind_method(D_METHOD("_post_gui_grab_click_focus"), &Viewport::_post_gui_grab_click_focus);
 
 	ClassDB::bind_method(D_METHOD("set_shadow_atlas_size", "size"), &Viewport::set_shadow_atlas_size);
