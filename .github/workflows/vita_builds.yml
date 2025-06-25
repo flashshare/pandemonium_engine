@@ -28,7 +28,7 @@ jobs:
         uses: ./.github/actions/godot-cache-restore
         continue-on-error: true
 
-      - name: Setup python and scons
+      - name: Setup Python & SCons
         uses: ./.github/actions/godot-deps
 
       - name: Setup VitaSDK toolchain
@@ -40,13 +40,13 @@ jobs:
           ./bootstrap-vitasdk.sh
           ./install-all.sh
           export PATH=$VITASDK/bin:$PATH
-          # Install updated VitaSDK host tools (including patched vita-elf-create)
+          # Install the latest VitaSDK host tools (patched vita-elf-create)
           vdpm vita-toolchain
-          # Install any additional PS Vita libraries
+          # Install PS Vita libraries
           vdpm vita-rss-libdl
           vdpm pvr_psp2
 
-      - name: Compilation
+      - name: Compile Godot for Vita
         uses: ./.github/actions/godot-build
         with:
           sconsflags: ${{ env.SCONSFLAGS }}
@@ -61,7 +61,8 @@ jobs:
         continue-on-error: true
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: godot-vita-release
           path: temp-build/vita_release.velf
+          overwrite: true  # uncomment if re-running within same workflow and need to replace existing artifact
