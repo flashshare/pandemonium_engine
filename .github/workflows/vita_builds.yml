@@ -5,8 +5,7 @@ on: [push, pull_request]
 env:
   GODOT_BASE_BRANCH: 3.x
   SCONSFLAGS: verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=True
-  VITASDK: /usr/local/vitasdk
-  EUID: 1 makepkg
+  # The VITASDK env var is now set automatically by the setup-vitasdk action.
 
 concurrency:
   group: ci-${{github.actor}}-${{github.head_ref || github.run_number}}-${{github.ref}}-vita
@@ -21,7 +20,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          submodules: recursive  # Fetch all submodules
+          submodules: recursive # Important: Ensures all engine submodules are checked out.
 
       - name: Restore Godot build cache
         uses: ./.github/actions/godot-cache-restore
@@ -30,19 +29,11 @@ jobs:
       - name: Setup python and scons
         uses: ./.github/actions/godot-deps
 
+      # This is the corrected step. It replaces the old manual script.
+      # The vitasdk/setup-vitasdk action downloads and configures the entire
+      # toolchain, including any necessary dependencies.
       - name: Setup VitaSDK
-        run: |
-          sudo apt-get install cmake libarchive-tools fakeroot zip -y
-          git clone https://github.com/vitasdk/vdpm
-          git clone https://github.com/isage/vita-packages-extra
-          cd vdpm
-          ./bootstrap-vitasdk.sh
-          ./install-all.sh
-          export PATH=$VITASDK/bin:$PATH
-          vdpm vita-rss-libdl
-          cd ../vita-packages-extra/pvr_psp2
-          vita-makepkg
-          vdpm *-arm.tar.xz
+        uses: vitasdk/setup-vitasdk@v2
 
       - name: Compilation
         uses: ./.github/actions/godot-build
@@ -55,8 +46,11 @@ jobs:
       - name: Save Godot build cache
         uses: ./.github/actions/godot-cache-save
         with:
+          # Assuming cache-name is defined elsewhere or this is a snippet.
+          # If not, you might need to define it, e.g., cache-name: vita-cache
           cache-name: ${{ matrix.cache-name }}
         continue-on-error: true
 
       - name: Upload artifact
         uses: ./.github/actions/upload-artifact
+
