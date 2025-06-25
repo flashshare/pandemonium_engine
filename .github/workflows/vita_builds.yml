@@ -34,22 +34,26 @@ jobs:
       - name: Install & bootstrap VitaSDK
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake libarchive-tools fakeroot zip git pkg-config
-          # Clone VDPM (Vita SDK package manager + vita-makepkg source)
+          sudo apt-get install -y cmake libarchive-tools fakeroot zip git pkg-config xz-utils unzip
           git clone https://github.com/vitasdk/vdpm $HOME/vdpm
           cd $HOME/vdpm
-          ./bootstrap-vitasdk.sh    # pulls down and installs vita-makepkg & core SDK
-          ./install-all.sh          # installs all common packages into /usr/local/vitasdk
-          # Persist the VitaSDK tools to ALL following steps:
+          ./bootstrap-vitasdk.sh
+          ./install-all.sh
+          # Persist SDK tools into all subsequent steps
           echo "$VITASDK/bin" >> $GITHUB_PATH
           echo "$HOME/vdpm/vita-makepkg" >> $GITHUB_PATH
 
-      - name: Install Vita host toolchain & PS Vita libraries
+      - name: Install Vita host toolchain & core libs
         run: |
-          # Now `vdpm` and `vita-makepkg` are in $PATH:
-          vdpm vita-toolchain      # latest compiler, vita-elf-create, etc.
-          vdpm vita-rss-libdl      # essential Vita libc stubs
-          vdpm pvr_psp2            # PVR2D driver headers + stubs
+          vdpm vita-toolchain
+          vdpm vita-rss-libdl
+
+      - name: Install PVR_PSP2 GPU driver headers & stubs
+        run: |
+          git clone https://github.com/isage/vita-packages-extra $HOME/vita-packages-extra
+          cd $HOME/vita-packages-extra/pvr_psp2
+          vita-makepkg
+          vdpm *-arm.tar.xz
 
       - name: Compile Godot for Vita
         uses: ./.github/actions/godot-build
