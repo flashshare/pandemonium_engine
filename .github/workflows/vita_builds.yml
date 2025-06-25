@@ -34,17 +34,23 @@ jobs:
       - name: Setup VitaSDK toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake libarchive-tools fakeroot zip git
+          sudo apt-get install -y cmake libarchive-tools fakeroot zip git pkg-config
           git clone https://github.com/vitasdk/vdpm $HOME/vdpm
           cd $HOME/vdpm
           ./bootstrap-vitasdk.sh
           ./install-all.sh
           export PATH=$VITASDK/bin:$PATH
-          # Install the latest VitaSDK host tools (patched vita-elf-create)
+          # Install/update the VitaSDK host tools (with patched vita-elf-create)
           vdpm vita-toolchain
-          # Install PS Vita libraries
+          # Install core Vita runtime libraries
           vdpm vita-rss-libdl
-          vdpm pvr_psp2
+
+      - name: Install PVR_PSP2 GPU driver headers & stubs
+        run: |
+          git clone https://github.com/isage/vita-packages-extra $HOME/vita-packages-extra
+          cd $HOME/vita-packages-extra/pvr_psp2
+          vita-makepkg
+          vdpm *-arm.tar.xz
 
       - name: Compile Godot for Vita
         uses: ./.github/actions/godot-build
@@ -65,4 +71,4 @@ jobs:
         with:
           name: godot-vita-release
           path: temp-build/vita_release.velf
-          overwrite: true  # uncomment if re-running within same workflow and need to replace existing artifact
+          overwrite: true
