@@ -1,15 +1,19 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="FormExistsFieldEntry" inherits="FormFieldEntry">
 	<brief_description>
+		Checks if the given html form field's value exists.
 	</brief_description>
 	<description>
+		Used by [FormField]s to implement html form validation capabilities.
+		Checks if the given html form field's value exists.
 	</description>
 	<tutorials>
 	</tutorials>
 	<methods>
 	</methods>
 	<members>
-		<member name="not_exists_error" type="String" setter="set_not_exists_error" getter="get_not_exists_error" default="&quot; field need to exists!&quot;">
+		<member name="not_exists_error" type="String" setter="set_not_exists_error" getter="get_not_exists_error" default="&quot;%s field need to exists!&quot;">
+			Error string.
 		</member>
 	</members>
 	<constants>

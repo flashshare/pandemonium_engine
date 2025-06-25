@@ -1,7 +1,7 @@
 short_name = "pandemonium_engine"
 name = "Pandemonium Engine"
 major = 4
-minor = 7
+minor = 8
 patch = 0
 status = "development"
 module_config = ""
