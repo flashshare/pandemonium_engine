@@ -1,3 +1,7 @@
+#
+# This workflow builds the PlayStation Vita export template for the Pandemonium engine.
+# It uses the official vitasdk/setup-vitasdk action for a reliable and up-to-date toolchain.
+#
 name: 🎮 PSVita Builds
 on: [push, pull_request]
 
@@ -32,8 +36,9 @@ jobs:
       # This is the corrected step. It replaces the old manual script.
       # The vitasdk/setup-vitasdk action downloads and configures the entire
       # toolchain, including any necessary dependencies.
+      # Updated to @v4 as @v2 is no longer resolved.
       - name: Setup VitaSDK
-        uses: vitasdk/setup-vitasdk@v2
+        uses: vitasdk/setup-vitasdk@v4
 
       - name: Compilation
         uses: ./.github/actions/godot-build
