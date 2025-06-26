@@ -1,18 +1,6 @@
 name: 🎮 PSVita Builds
 
-on:
-  push:
-    paths:
-      - 'platform/vita/**'
-      - 'core/**'
-      - 'drivers/**'
-      - 'SConstruct'
-  pull_request:
-    paths:
-      - 'platform/vita/**'
-      - 'core/**'
-      - 'drivers/**'
-      - 'SConstruct'
+on: [push, pull_request]
 
 env:
   GODOT_BASE_BRANCH: 3.x
