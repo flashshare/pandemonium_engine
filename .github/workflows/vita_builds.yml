@@ -6,79 +6,201 @@ on:
 
 env:
   GODOT_BASE_BRANCH: 3.x
-  SCONSFLAGS: verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=True
+  # Reduced parallelism to prevent resource starvation + connection keepalive
+  SCONSFLAGS: -Q --implicit-cache -j2 verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=True
   VITASDK: /usr/local/vitasdk
+  CCACHE_DIR: ${{ runner.home }}/.ccache
+  # Prevent memory exhaustion
+  CCACHE_MAXSIZE: 2G
 
 concurrency:
-  group: ci-${{ github.actor }}-${{ github.head_ref || github.run_number }}-${{ github.ref }}-vita
+  group: vita-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   vita-template:
     name: Template (target=release, tools=no)
     runs-on: ubuntu-24.04
+    timeout-minutes: 240  # 4-hour maximum to prevent infinite runs
 
     steps:
+      # 1. Checkout with shallow clone to save resources
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 1
 
-      - name: Restore Godot build cache
-        uses: ./.github/actions/godot-cache-restore
-        continue-on-error: true
+      # 2. Enhanced caching with better keys
+      - name: Cache VitaSDK installation
+        uses: actions/cache@v4
+        id: cache-vitasdk
+        with:
+          path: |
+            /usr/local/vitasdk
+            ${{ runner.home }}/vdpm
+            ${{ runner.home }}/vita-packages-extra
+          key: vitasdk-${{ runner.os }}-${{ hashFiles('.github/workflows/vita.yml') }}-v3
+          restore-keys: |
+            vitasdk-${{ runner.os }}-
+
+      - name: Cache Godot build outputs
+        uses: actions/cache@v4
+        id: cache-build
+        with:
+          path: |
+            .scons-cache
+            temp-build
+          key: vita-build-${{ runner.os }}-${{ hashFiles('platform/vita/**', 'core/**', 'drivers/**', 'SConstruct') }}
+          restore-keys: |
+            vita-build-${{ runner.os }}-
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-${{ github.ref }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
+
+      # 3. Resource monitoring and ccache setup
+      - name: Setup ccache with limits
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          max-size: 2G
+
+      - name: Monitor initial resources
+        run: |
+          echo "=== System Resources ==="
+          free -h
+          df -h
+          nproc
+          echo "========================"
 
       - name: Setup Python & SCons
         uses: ./.github/actions/godot-deps
 
-      - name: Remove system libelf to prevent conflicts
+      # 4. Install dependencies with keepalive
+      - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get remove -y libelf-dev libelf1 || true
           sudo apt-get install -y cmake libarchive-tools fakeroot zip git pkg-config xz-utils unzip
 
-      - name: Install & bootstrap VitaSDK (without system libelf)
+      # 5. VitaSDK setup with connection keepalive and resource monitoring
+      - name: Install & bootstrap VitaSDK
+        if: steps.cache-vitasdk.outputs.cache-hit != 'true'
         run: |
+          # Start keepalive process
+          while true; do
+            echo "[$(date)] VitaSDK installation in progress... Memory: $(free -m | awk 'NR==2{printf "%.1fGB used/%.1fGB total", $3/1024, $2/1024}')"
+            sleep 180  # Every 3 minutes
+          done &
+          KEEPALIVE_PID=$!
+          
+          # Cleanup function
+          cleanup() {
+            echo "Stopping keepalive process..."
+            kill $KEEPALIVE_PID 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          
           git clone https://github.com/vitasdk/vdpm $HOME/vdpm
           cd $HOME/vdpm
+          echo "[$(date)] Starting VitaSDK bootstrap..."
           ./bootstrap-vitasdk.sh
+          echo "[$(date)] Bootstrap complete, installing packages..."
           ./install-all.sh
-          # Persist SDK tools into all subsequent steps
-          echo "$VITASDK/bin" >> $GITHUB_PATH
-
-      - name: Force rebuild VitaSDK toolchain against bundled libelf
-        run: |
-          # Remove any existing vita-toolchain to force clean rebuild
+          echo "[$(date)] Installing vita-toolchain..."
           vdpm -f vita-toolchain
-          # Install Vita runtime libraries
+          echo "[$(date)] Installing vita-rss-libdl..."
           vdpm vita-rss-libdl
+          echo "$VITASDK/bin" >> $GITHUB_PATH
+          
+          # Memory check after VitaSDK install
+          echo "=== Memory after VitaSDK install ==="
+          free -h
+          echo "===================================="
 
-      - name: Install PVR_PSP2 GPU driver headers & stubs  
+      - name: Install PVR_PSP2 driver
+        if: steps.cache-vitasdk.outputs.cache-hit != 'true'
         run: |
+          echo "[$(date)] Installing PVR_PSP2 driver..."
           git clone https://github.com/isage/vita-packages-extra $HOME/vita-packages-extra
           cd $HOME/vita-packages-extra/pvr_psp2
           vita-makepkg
           vdpm *-arm.tar.xz
+          echo "[$(date)] PVR_PSP2 installation complete"
 
-      - name: Verify vita-elf-create supports relocation type 25
-        run: |
-          echo "Testing vita-elf-create version and capabilities..."
-          vita-elf-create --help || true
-          strings $VITASDK/bin/vita-elf-create | grep -i "relocation\|invalid" || true
-
+      # 6. Build with enhanced monitoring and connection keepalive
       - name: Compile Godot for Vita
-        uses: ./.github/actions/godot-build
+        run: |
+          # Start build monitor
+          while true; do
+            echo "[$(date)] Build in progress... Memory: $(free -m | awk 'NR==2{printf "%.1fGB used/%.1fGB total (%.1f%%)", $3/1024, $2/1024, $3*100/$2}'), Load: $(uptime | awk -F'load average:' '{print $2}')"
+            sleep 300  # Every 5 minutes
+          done &
+          MONITOR_PID=$!
+          
+          # Cleanup function
+          cleanup() {
+            echo "Stopping build monitor..."
+            kill $MONITOR_PID 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          
+          echo "[$(date)] Starting Godot compilation..."
+          echo "Using SCons flags: ${{ env.SCONSFLAGS }}"
+          
+          # Run build with timeout protection
+          timeout 7200 scons ${{ env.SCONSFLAGS }} platform=vita target=release tools=false || {
+            echo "Build timed out or failed after 2 hours"
+            exit 1
+          }
+          
+          echo "[$(date)] Compilation complete!"
+          
+          # Final resource check
+          echo "=== Final Memory Usage ==="
+          free -h
+          echo "=========================="
+
+      # 7. Save caches
+      - name: Save VitaSDK cache
+        if: steps.cache-vitasdk.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
         with:
-          sconsflags: ${{ env.SCONSFLAGS }}
-          platform: vita
-          target: release
-          tools: false
+          path: |
+            /usr/local/vitasdk
+            ${{ runner.home }}/vdpm
+            ${{ runner.home }}/vita-packages-extra
+          key: vitasdk-${{ runner.os }}-${{ hashFiles('.github/workflows/vita.yml') }}-v3
 
       - name: Save Godot build cache
-        uses: ./.github/actions/godot-cache-save
+        if: steps.cache-build.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
         with:
-          cache-name: ${{ github.workflow }}-vita
-        continue-on-error: true
+          path: |
+            .scons-cache
+            temp-build
+          key: vita-build-${{ runner.os }}-${{ hashFiles('platform/vita/**', 'core/**', 'drivers/**', 'SConstruct') }}
+
+      - name: Save ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-${{ github.ref }}
+
+      # 8. Upload with verification
+      - name: Verify and upload artifact
+        run: |
+          if [[ -f "temp-build/vita_release.velf" ]]; then
+            echo "Build artifact found: $(ls -lh temp-build/vita_release.velf)"
+          else
+            echo "ERROR: Build artifact not found!"
+            ls -la temp-build/ || echo "temp-build directory not found"
+            exit 1
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
