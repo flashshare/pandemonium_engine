@@ -1,14 +1,25 @@
 name: 🎮 PSVita Builds
 
-on: [push, pull_request]
-
+on:
+  push:
+    paths:
+      - 'platform/vita/**'
+      - 'core/**'
+      - 'drivers/**'
+      - 'SConstruct'
+  pull_request:
+    paths:
+      - 'platform/vita/**'
+      - 'core/**'
+      - 'drivers/**'
+      - 'SConstruct'
 
 env:
   GODOT_BASE_BRANCH: 3.x
   VITASDK: /usr/local/vitasdk
   CCACHE_DIR: /home/runner/.ccache
   CCACHE_MAXSIZE: 2G
-  # SCons flags: enable implicit cache, limit parallel jobs to 2
+  # SCons flags: enable implicit-dep cache and limit parallel jobs
   SCONSFLAGS: -Q --implicit-cache -j2 verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=True
 
 concurrency:
@@ -22,7 +33,7 @@ jobs:
     timeout-minutes: 300
 
     steps:
-      # 1. Checkout code and submodules (shallow)
+      # 1. Checkout code + submodules (shallow)
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -31,8 +42,8 @@ jobs:
 
       # 2. Cache VitaSDK install
       - name: Cache VitaSDK installation
-        uses: actions/cache@v4
         id: cache-vitasdk
+        uses: actions/cache@v4
         with:
           path: |
             /usr/local/vitasdk
@@ -42,10 +53,10 @@ jobs:
           restore-keys: |
             vitasdk-${{ runner.os }}-
 
-      # 3. Cache SCons build outputs
+      # 3. Cache SCons outputs
       - name: Cache SCons outputs
-        uses: actions/cache@v4
         id: cache-build
+        uses: actions/cache@v4
         with:
           path: |
             .scons-cache
@@ -74,6 +85,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+      - name: Install SCons
         run: |
           python -m pip install --upgrade scons==4.7.0
           scons --version
@@ -85,7 +97,7 @@ jobs:
           sudo apt-get remove -y libelf-dev libelf1 || true
           sudo apt-get install -y cmake libarchive-tools fakeroot zip git pkg-config xz-utils unzip
 
-      # 8. Bootstrap VitaSDK (if not cached)
+      # 8. Bootstrap VitaSDK (if cache miss)
       - name: Bootstrap VitaSDK
         if: steps.cache-vitasdk.outputs.cache-hit != 'true'
         run: |
@@ -93,18 +105,17 @@ jobs:
           cd /home/runner/vdpm
           ./bootstrap-vitasdk.sh
           ./install-all.sh
-          # Export paths for vita-elf-create and vdpm in future steps
           echo "$VITASDK/bin" >> $GITHUB_PATH
-          echo "/home/runner/vdpm"    >> $GITHUB_PATH
+          echo "/home/runner/vdpm" >> $GITHUB_PATH
 
-      # 9. Rebuild the Vita toolchain against bundled libelf and install runtime libs
-      - name: Rebuild Vita toolchain & runtime libs
+      # 9. Rebuild Vita toolchain & runtime libs
+      - name: Rebuild Vita toolchain & libs
         run: |
           vdpm -f vita-toolchain
           vdpm vita-rss-libdl
 
-      # 10. Install PVR_PSP2 GPU driver (if not cached)
-      - name: Install PVR_PSP2 driver
+      # 10. Install PVR_PSP2 driver (if cache miss)
+      - name: Install PVR_PSP2 GPU driver
         if: steps.cache-vitasdk.outputs.cache-hit != 'true'
         run: |
           git clone https://github.com/isage/vita-packages-extra /home/runner/vita-packages-extra
@@ -112,22 +123,22 @@ jobs:
           vita-makepkg
           vdpm *-arm.tar.xz
 
-      # 11. Verify that vita-elf-create supports relocation type 25
+      # 11. Verify vita-elf-create support
       - name: Verify vita-elf-create
         run: |
-          echo "Testing vita-elf-create capabilities..."
+          echo "Checking vita-elf-create relocation support..."
           vita-elf-create --help || true
-          strings $VITASDK/bin/vita-elf-create | grep -E "R_ARM_THM_CALL|Invalid relocation" || echo "Relocation support OK"
+          strings $VITASDK/bin/vita-elf-create | grep -E "R_ARM_THM_CALL|Invalid relocation" || echo "Support OK"
 
-      # 12. Compile Godot for Vita (incremental via implicit cache)
+      # 12. Compile Godot for Vita
       - name: Compile Godot for Vita
         run: |
           echo "Starting Godot build..."
           scons platform=vita target=release tools=false ${{ env.SCONSFLAGS }}
 
-      # 13. Always save SCons outputs back to cache
+      # 13. Always save SCons cache
       - name: Save SCons outputs
-        if: always() && steps.cache-build.outputs.cache-hit != 'true'
+        if: always()
         uses: actions/cache@v4
         with:
           path: |
@@ -143,7 +154,7 @@ jobs:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-vita-${{ runner.os }}-${{ github.ref }}
 
-      # 15. Upload the final VELF artifact
+      # 15. Upload VELF artifact
       - name: Upload VELF artifact
         uses: actions/upload-artifact@v4
         with:

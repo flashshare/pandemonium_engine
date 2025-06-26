@@ -1,13 +1,13 @@
 name: 🤖 Android Builds
 
-# Run only when manually triggered
+# Manually triggered only
 on:
   workflow_dispatch:
 
 env:
-  # Branch for cache key; bump to force a clean build
+  # Cache key branch; bump to force clean build
   GODOT_BASE_BRANCH: 3.x
-  # SCons flags: implicit cache + limited parallelism
+  # SCons flags: implicit-dependency cache + limited parallelism
   SCONSFLAGS: -Q --implicit-cache -j2 verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=False
   # ccache configuration
   CCACHE_DIR: /home/runner/.ccache
@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 120
 
     steps:
-      # 1. Check out repository and submodules
+      # 1. Checkout repository + submodules
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -46,6 +46,7 @@ jobs:
       # 3. Restore ccache
       - name: Restore ccache
         uses: actions/cache@v4
+        id: cache-ccache
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-android-${{ runner.os }}-${{ github.ref }}
@@ -65,28 +66,37 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      # 6. Install Python & SCons
-      - name: Install SCons
+      # 6. Set up Python
+      - name: Setup Python 3.x
         uses: actions/setup-python@v5
         with:
-          python-version: 3.x
+          python-version: '3.x'
+
+      # 7. Install SCons
+      - name: Install SCons
         run: |
           python -m pip install --upgrade scons==4.7.0
           scons --version
 
-      # 7. Build armv7 export template
+      # 8. Install any additional tools
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config
+
+      # 9. Compile armv7 export
       - name: Compile (armv7)
         run: |
           echo "Building Android armv7 export..."
           scons platform=android android_arch=armv7 target=release tools=false ${{ env.SCONSFLAGS }}
 
-      # 8. Build arm64v8 export template
+      # 10. Compile arm64v8 export
       - name: Compile (arm64v8)
         run: |
           echo "Building Android arm64v8 export..."
           scons platform=android android_arch=arm64v8 target=release tools=false ${{ env.SCONSFLAGS }}
 
-      # 9. Generate Java templates via Gradle
+      # 11. Generate Java templates via Gradle
       - name: Generate Android templates
         run: |
           cd platform/android/java
@@ -95,9 +105,9 @@ jobs:
           cd ../../..
           ls -l bin/
 
-      # 10. Save SCons cache on cache miss
+      # 12. Save SCons cache (even if build fails)
       - name: Save Godot build cache
-        if: steps.cache-build.outputs.cache-hit != 'true'
+        if: always()
         uses: actions/cache@v4
         with:
           path: |
@@ -105,15 +115,15 @@ jobs:
             temp-build
           key: android-scons-${{ runner.os }}-${{ hashFiles('platform/android/**','core/**','drivers/**','SConstruct') }}
 
-      # 11. Save ccache on miss
+      # 13. Save ccache (even if build fails)
       - name: Save ccache
-        if: steps.cache-build.outputs.cache-hit != 'true'
+        if: always()
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-android-${{ runner.os }}-${{ github.ref }}
 
-      # 12. Upload artifacts
+      # 14. Upload export templates
       - name: Upload Android export templates
         uses: actions/upload-artifact@v4
         with:
