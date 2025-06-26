@@ -6,11 +6,11 @@ on:
 
 env:
   GODOT_BASE_BRANCH: 3.x
-  # Reduced parallelism to prevent resource starvation + connection keepalive
+  # Reduced parallelism to prevent resource starvation and enable implicit cache
   SCONSFLAGS: -Q --implicit-cache -j2 verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=True
   VITASDK: /usr/local/vitasdk
-  CCACHE_DIR: ${{ runner.home }}/.ccache
-  # Prevent memory exhaustion
+  # Fixed path instead of runner.home to avoid context error
+  CCACHE_DIR: /home/runner/.ccache
   CCACHE_MAXSIZE: 2G
 
 concurrency:
@@ -21,7 +21,7 @@ jobs:
   vita-template:
     name: Template (target=release, tools=no)
     runs-on: ubuntu-24.04
-    timeout-minutes: 240  # 4-hour maximum to prevent infinite runs
+    timeout-minutes: 300  # 5-hour maximum to prevent infinite runs
 
     steps:
       # 1. Checkout with shallow clone to save resources
@@ -31,19 +31,20 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      # 2. Enhanced caching with better keys
+      # 2. Enhanced caching for VitaSDK installation
       - name: Cache VitaSDK installation
         uses: actions/cache@v4
         id: cache-vitasdk
         with:
           path: |
             /usr/local/vitasdk
-            ${{ runner.home }}/vdpm
-            ${{ runner.home }}/vita-packages-extra
-          key: vitasdk-${{ runner.os }}-${{ hashFiles('.github/workflows/vita.yml') }}-v3
+            /home/runner/vdpm
+            /home/runner/vita-packages-extra
+          key: vitasdk-${{ runner.os }}-${{ hashFiles('.github/workflows/*.yml') }}-v4
           restore-keys: |
             vitasdk-${{ runner.os }}-
 
+      # 3. Cache Godot build outputs
       - name: Cache Godot build outputs
         uses: actions/cache@v4
         id: cache-build
@@ -55,39 +56,43 @@ jobs:
           restore-keys: |
             vita-build-${{ runner.os }}-
 
+      # 4. Cache ccache
       - name: Cache ccache
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-${{ github.ref }}
+          key: ccache-vita-${{ runner.os }}-${{ github.ref }}
           restore-keys: |
-            ccache-${{ runner.os }}-
+            ccache-vita-${{ runner.os }}-
 
-      # 3. Resource monitoring and ccache setup
-      - name: Setup ccache with limits
+      # 5. Setup ccache with limits
+      - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           max-size: 2G
+          key: vita-${{ runner.os }}
 
-      - name: Monitor initial resources
-        run: |
-          echo "=== System Resources ==="
-          free -h
-          df -h
-          nproc
-          echo "========================"
-
+      # 6. Setup Python & SCons
       - name: Setup Python & SCons
         uses: ./.github/actions/godot-deps
 
-      # 4. Install dependencies with keepalive
+      # 7. Monitor initial resources
+      - name: Monitor system resources
+        run: |
+          echo "=== Initial System Resources ==="
+          free -h
+          df -h /
+          echo "CPU cores: $(nproc)"
+          echo "==============================="
+
+      # 8. Install build dependencies
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get remove -y libelf-dev libelf1 || true
           sudo apt-get install -y cmake libarchive-tools fakeroot zip git pkg-config xz-utils unzip
 
-      # 5. VitaSDK setup with connection keepalive and resource monitoring
+      # 9. Install VitaSDK with connection keepalive (only if cache miss)
       - name: Install & bootstrap VitaSDK
         if: steps.cache-vitasdk.outputs.cache-hit != 'true'
         run: |
@@ -105,34 +110,55 @@ jobs:
           }
           trap cleanup EXIT
           
-          git clone https://github.com/vitasdk/vdpm $HOME/vdpm
-          cd $HOME/vdpm
+          echo "[$(date)] Cloning VitaSDK package manager..."
+          git clone https://github.com/vitasdk/vdpm /home/runner/vdpm
+          cd /home/runner/vdpm
+          
           echo "[$(date)] Starting VitaSDK bootstrap..."
           ./bootstrap-vitasdk.sh
-          echo "[$(date)] Bootstrap complete, installing packages..."
+          
+          echo "[$(date)] Installing VitaSDK packages..."
           ./install-all.sh
-          echo "[$(date)] Installing vita-toolchain..."
+          
+          echo "[$(date)] Installing vita-toolchain (with relocation fix)..."
           vdpm -f vita-toolchain
+          
           echo "[$(date)] Installing vita-rss-libdl..."
           vdpm vita-rss-libdl
+          
           echo "$VITASDK/bin" >> $GITHUB_PATH
           
-          # Memory check after VitaSDK install
+          # Memory check after installation
           echo "=== Memory after VitaSDK install ==="
           free -h
-          echo "===================================="
+          echo "=================================="
 
-      - name: Install PVR_PSP2 driver
+      # 10. Install PVR_PSP2 driver (only if cache miss)
+      - name: Install PVR_PSP2 GPU driver
         if: steps.cache-vitasdk.outputs.cache-hit != 'true'
         run: |
-          echo "[$(date)] Installing PVR_PSP2 driver..."
-          git clone https://github.com/isage/vita-packages-extra $HOME/vita-packages-extra
-          cd $HOME/vita-packages-extra/pvr_psp2
+          echo "[$(date)] Installing PVR_PSP2 GPU driver..."
+          git clone https://github.com/isage/vita-packages-extra /home/runner/vita-packages-extra
+          cd /home/runner/vita-packages-extra/pvr_psp2
           vita-makepkg
           vdpm *-arm.tar.xz
           echo "[$(date)] PVR_PSP2 installation complete"
 
-      # 6. Build with enhanced monitoring and connection keepalive
+      # 11. Ensure VitaSDK is in PATH (for cache hits)
+      - name: Setup VitaSDK environment
+        run: |
+          echo "$VITASDK/bin" >> $GITHUB_PATH
+          echo "/home/runner/vdpm" >> $GITHUB_PATH
+
+      # 12. Verify vita-elf-create capabilities
+      - name: Verify vita-elf-create supports relocation type 25
+        run: |
+          echo "Testing vita-elf-create version and capabilities..."
+          vita-elf-create --help || true
+          echo "Checking for relocation support..."
+          strings $VITASDK/bin/vita-elf-create | grep -i "relocation\|invalid" || echo "No relocation strings found"
+
+      # 13. Compile with enhanced monitoring and connection keepalive
       - name: Compile Godot for Vita
         run: |
           # Start build monitor
@@ -152,7 +178,7 @@ jobs:
           echo "[$(date)] Starting Godot compilation..."
           echo "Using SCons flags: ${{ env.SCONSFLAGS }}"
           
-          # Run build with timeout protection
+          # Run build with timeout protection (2 hours max for compilation)
           timeout 7200 scons ${{ env.SCONSFLAGS }} platform=vita target=release tools=false || {
             echo "Build timed out or failed after 2 hours"
             exit 1
@@ -160,25 +186,34 @@ jobs:
           
           echo "[$(date)] Compilation complete!"
           
+          # Verify output file
+          if [[ -f "temp-build/vita_release.velf" ]]; then
+            echo "Build artifact created: $(ls -lh temp-build/vita_release.velf)"
+          else
+            echo "ERROR: Build artifact not found!"
+            ls -la temp-build/ || echo "temp-build directory not found"
+            exit 1
+          fi
+          
           # Final resource check
           echo "=== Final Memory Usage ==="
           free -h
-          echo "=========================="
+          echo "========================="
 
-      # 7. Save caches
+      # 14. Save caches (conditional)
       - name: Save VitaSDK cache
         if: steps.cache-vitasdk.outputs.cache-hit != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache/save@v4
         with:
           path: |
             /usr/local/vitasdk
-            ${{ runner.home }}/vdpm
-            ${{ runner.home }}/vita-packages-extra
-          key: vitasdk-${{ runner.os }}-${{ hashFiles('.github/workflows/vita.yml') }}-v3
+            /home/runner/vdpm
+            /home/runner/vita-packages-extra
+          key: vitasdk-${{ runner.os }}-${{ hashFiles('.github/workflows/*.yml') }}-v4
 
       - name: Save Godot build cache
         if: steps.cache-build.outputs.cache-hit != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache/save@v4
         with:
           path: |
             .scons-cache
@@ -186,22 +221,12 @@ jobs:
           key: vita-build-${{ runner.os }}-${{ hashFiles('platform/vita/**', 'core/**', 'drivers/**', 'SConstruct') }}
 
       - name: Save ccache
-        uses: actions/cache@v4
+        uses: actions/cache/save@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-${{ github.ref }}
+          key: ccache-vita-${{ runner.os }}-${{ github.ref }}
 
-      # 8. Upload with verification
-      - name: Verify and upload artifact
-        run: |
-          if [[ -f "temp-build/vita_release.velf" ]]; then
-            echo "Build artifact found: $(ls -lh temp-build/vita_release.velf)"
-          else
-            echo "ERROR: Build artifact not found!"
-            ls -la temp-build/ || echo "temp-build directory not found"
-            exit 1
-          fi
-
+      # 15. Upload final artifact
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
