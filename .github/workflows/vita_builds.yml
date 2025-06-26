@@ -4,9 +4,7 @@ on: [push, pull_request]
 
 env:
   GODOT_BASE_BRANCH: 3.x
-  VITASDK: /usr/local/vitasdk
-  CCACHE_DIR: /home/runner/.ccache
-  CCACHE_MAXSIZE: 2G
+  # SCons flags for incremental builds
   SCONSFLAGS: -Q --implicit-cache -j2 verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=True
 
 concurrency:
@@ -17,7 +15,8 @@ jobs:
   vita-template:
     name: Template (target=release, tools=no)
     runs-on: ubuntu-24.04
-    timeout-minutes: 300
+    container: gnuton/vitasdk-docker:latest
+    timeout-minutes: 180
 
     steps:
       # 1. Checkout code + submodules
@@ -27,169 +26,79 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      # 2. Cache VitaSDK installation
-      - name: Cache VitaSDK installation
-        id: cache-vitasdk
-        uses: actions/cache@v4
-        with:
-          path: |
-            /usr/local/vitasdk
-            /home/runner/vdpm
-            /home/runner/vita-packages-extra
-          key: vitasdk-fixed-${{ runner.os }}-v4
-          restore-keys: |
-            vitasdk-fixed-${{ runner.os }}-
-
-      # 3. Cache SCons outputs
+      # 2. Cache SCons outputs (Docker persistent volume)
       - name: Cache SCons outputs
-        id: cache-build
         uses: actions/cache@v4
+        id: cache-build
         with:
           path: |
             .scons-cache
             temp-build
-          key: scons-${{ runner.os }}-${{ hashFiles('platform/vita/**','core/**','drivers/**','SConstruct') }}
+          key: vita-docker-${{ runner.os }}-${{ hashFiles('platform/vita/**','core/**','drivers/**','SConstruct') }}
           restore-keys: |
-            scons-${{ runner.os }}-
+            vita-docker-${{ runner.os }}-
 
-      # 4. Cache ccache
-      - name: Cache compiler cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-vita-${{ runner.os }}-${{ github.ref }}
-          restore-keys: |
-            ccache-vita-${{ runner.os }}-
-
-      # 5. Setup ccache
-      - name: Set up ccache
-        uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          max-size: 2G
-
-      # 6. Setup Python & SCons
-      - name: Set up Python & SCons
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
+      # 3. Setup Python & SCons (if not in container)
       - name: Install SCons
         run: |
-          python -m pip install --upgrade scons==4.7.0
+          python3 -m pip install --upgrade scons==4.7.0
           scons --version
 
-      # 7. Install build dependencies and remove conflicting packages
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          # Remove ALL libelf packages that could interfere
-          sudo apt-get purge -y libelf-dev libelf1 elfutils libelf0 || true
-          sudo apt-get autoremove -y || true
-          sudo apt-get install -y cmake libarchive-tools fakeroot zip git pkg-config xz-utils unzip build-essential patch
-
-      # 8. Bootstrap VitaSDK with proper libelf handling (if cache miss)
-      - name: Bootstrap VitaSDK with relocation fix
-        if: steps.cache-vitasdk.outputs.cache-hit != 'true'
-        run: |
-          # Clone vdpm using master branch (not main)
-          git clone https://github.com/vitasdk/vdpm /home/runner/vdpm
-          cd /home/runner/vdpm
-          
-          # Ensure we're on the latest master commit
-          git pull origin master
-          
-          # Bootstrap VitaSDK - this will build vita-elf-create with bundled libelf
-          ./bootstrap-vitasdk.sh
-          
-          # Install base packages
-          ./install-all.sh
-          
-          # Add to PATH for immediate use
-          echo "$VITASDK/bin" >> $GITHUB_PATH
-          echo "/home/runner/vdpm" >> $GITHUB_PATH
-          export PATH="$VITASDK/bin:/home/runner/vdpm:$PATH"
-          
-          # Force rebuild toolchain to ensure proper relocation support
-          /home/runner/vdpm/vdpm -f vita-toolchain
-          
-          # Install essential Vita libraries
-          /home/runner/vdpm/vdpm vita-rss-libdl
-
-      # 9. Install PVR_PSP2 driver (if cache miss)
+      # 4. Install PVR_PSP2 driver headers
       - name: Install PVR_PSP2 GPU driver
-        if: steps.cache-vitasdk.outputs.cache-hit != 'true'
         run: |
-          git clone https://github.com/isage/vita-packages-extra /home/runner/vita-packages-extra
-          cd /home/runner/vita-packages-extra/pvr_psp2
+          if [ ! -d "/vita-packages-extra" ]; then
+            git clone https://github.com/isage/vita-packages-extra /vita-packages-extra
+          fi
+          cd /vita-packages-extra/pvr_psp2
           vita-makepkg
           vdpm *-arm.tar.xz
 
-      # 10. Ensure PATH is set for cached installations
-      - name: Setup VitaSDK environment
+      # 5. Verify vita-elf-create supports relocation type 25
+      - name: Verify vita-elf-create relocation support
         run: |
-          echo "$VITASDK/bin" >> $GITHUB_PATH
-          echo "/home/runner/vdpm" >> $GITHUB_PATH
-
-      # 11. Test vita-elf-create relocation support
-      - name: Test vita-elf-create relocation support
-        run: |
-          echo "Testing vita-elf-create..."
+          echo "Testing vita-elf-create capabilities..."
           vita-elf-create --help || true
           
-          # Create a minimal test to verify relocation type 25 support
-          echo "Creating test ARM binary with Thumb-2 calls..."
-          cat > test_reloc.c << 'EOF'
-          void func1(void) {}
-          void func2(void) { func1(); }
-          int main(void) { func2(); return 0; }
+          # Create minimal test for relocation type 25
+          cat > test_thumb.c << 'EOF'
+          void target_func(void) {}
+          void caller_func(void) { target_func(); }
+          int main(void) { caller_func(); return 0; }
           EOF
           
-          # Compile with Thumb-2 to generate R_ARM_THM_CALL relocations
-          arm-vita-eabi-gcc -march=armv7-a -mthumb -c test_reloc.c -o test_reloc.o
-          arm-vita-eabi-gcc -march=armv7-a -mthumb test_reloc.o -o test_reloc.elf
+          # Compile with Thumb-2 to generate R_ARM_THM_CALL
+          arm-vita-eabi-gcc -march=armv7-a -mthumb -c test_thumb.c -o test_thumb.o
+          arm-vita-eabi-gcc -march=armv7-a -mthumb test_thumb.o -o test_thumb.elf
           
-          # Test vita-elf-create with the binary
-          echo "Testing vita-elf-create with Thumb-2 binary..."
-          if vita-elf-create test_reloc.elf test_reloc.velf; then
-            echo "✓ vita-elf-create successfully handles Thumb-2 relocations"
+          # Test vita-elf-create
+          echo "Testing vita-elf-create with Thumb-2 relocations..."
+          if vita-elf-create test_thumb.elf test_thumb.velf; then
+            echo "✓ vita-elf-create supports relocation type 25"
           else
-            echo "✗ vita-elf-create failed - relocation type 25 not supported"
+            echo "✗ vita-elf-create failed - may not support relocation type 25"
+            echo "Attempting to inspect relocation types in test binary..."
+            readelf -r test_thumb.elf || true
             exit 1
           fi
 
-      # 12. Compile Godot for Vita
+      # 6. Compile Godot for Vita
       - name: Compile Godot for Vita
         run: |
-          echo "Starting Godot build with fixed VitaSDK..."
+          echo "Starting Godot build with Docker VitaSDK..."
           scons platform=vita target=release tools=false ${{ env.SCONSFLAGS }}
 
-      # 13. Always save caches
-      - name: Save VitaSDK cache
-        if: always() && steps.cache-vitasdk.outputs.cache-hit != 'true'
-        uses: actions/cache@v4
-        with:
-          path: |
-            /usr/local/vitasdk
-            /home/runner/vdpm
-            /home/runner/vita-packages-extra
-          key: vitasdk-fixed-${{ runner.os }}-v4
-
-      - name: Save SCons outputs
+      # 7. Save cache
+      - name: Save SCons cache
         if: always()
         uses: actions/cache@v4
         with:
           path: |
             .scons-cache
             temp-build
-          key: scons-${{ runner.os }}-${{ hashFiles('platform/vita/**','core/**','drivers/**','SConstruct') }}
+          key: vita-docker-${{ runner.os }}-${{ hashFiles('platform/vita/**','core/**','drivers/**','SConstruct') }}
 
-      - name: Save compiler cache
-        if: always()
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-vita-${{ runner.os }}-${{ github.ref }}
-
-      # 14. Upload VELF artifact
+      # 8. Upload VELF artifact
       - name: Upload VELF artifact
         uses: actions/upload-artifact@v4
         with:
