@@ -1,38 +1,40 @@
+# .github/actions/build-godot/action.yml
 name: Build Godot
-description: Build Godot with the provided options.
+description: Build Godot with SCons (incremental, uses implicit cache).
 inputs:
   target:
-    description: The scons target (debug/release_debug/release).
+    description: The SCons target (debug/release_debug/release).
     default: "debug"
   tools:
-    description: If tools are to be built.
+    description: Build tools?
     default: false
   tests:
-    description: If tests are to be built.
+    description: Build tests?
     default: false
   platform:
-    description: The Godot platform to build.
-    required: false
+    description: Godot platform (e.g. vita, android).
   sconsflags:
+    description: Extra SCons flags.
     default: ""
   scons-cache:
-    description: The scons cache path.
+    description: Path to SCons cache.
     default: "${{ github.workspace }}/.scons-cache/"
-  scons-cache-limit:
-    description: The scons cache size limit.
-    # actions/cache has 10 GiB limit, and GitHub runners have a 14 GiB disk.
-    # Limit to 7 GiB to avoid having the extracted cache fill the disk.
-    default: 7168
 runs:
   using: "composite"
   steps:
-    - name: Scons Build
-      shell: sh
+    - name: SCons Build
+      shell: bash
       env:
-          SCONSFLAGS: ${{ inputs.sconsflags }}
-          SCONS_CACHE: ${{ inputs.scons-cache }}
-          SCONS_CACHE_LIMIT: ${{ inputs.scons-cache-limit }}
+        # Tell SCons to use its implicit-dependency cache here:
+        SCONS_CACHE: ${{ inputs.scons-cache }}
+        # Pass implicit caching to SCons as well:
+        SCONSFLAGS: "--implicit-cache ${{ inputs.sconsflags }}"
       run: |
-        echo "Building with flags:" ${{ env.SCONSFLAGS }}
-        scons p=${{ inputs.platform }} target=${{ inputs.target }} tools=${{ inputs.tools }} tests=${{ inputs.tests }} ${{ env.SCONSFLAGS }}
+        echo "Building with flags: $SCONSFLAGS"
+        # Invoke SCons in the *same* workspace where the cache was restored
+        scons p=${{ inputs.platform }} \
+              target=${{ inputs.target }} \
+              tools=${{ inputs.tools }} \
+              tests=${{ inputs.tests }} \
+              $SCONSFLAGS
         ls -l bin/

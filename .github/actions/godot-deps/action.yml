@@ -1,27 +1,23 @@
-name: Setup python and scons
-description: Setup python, install the pip version of scons.
+# .github/actions/godot-deps/action.yml
+name: Setup Python & SCons
+description: Install Python and pinned SCons.
 inputs:
   python-version:
-    description: The python version to use.
+    description: Semantic version (e.g. "3.x").
     default: "3.x"
   python-arch:
-    description: The python architecture.
+    description: "x64" or "x86".
     default: "x64"
 runs:
   using: "composite"
   steps:
-    # Use python 3.x release (works cross platform)
-    - name: Set up Python 3.x
+    - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        # Semantic version range syntax or exact version of a Python version
         python-version: ${{ inputs.python-version }}
-        # Optional - x64 or x86 architecture, defaults to x64
         architecture: ${{ inputs.python-arch }}
-
-    - name: Setup scons
+    - name: Install SCons
       shell: bash
       run: |
-        python -c "import sys; print(sys.version)"
-        python -m pip install scons==4.7.0
+        python -m pip install --upgrade scons==4.7.0
         scons --version
