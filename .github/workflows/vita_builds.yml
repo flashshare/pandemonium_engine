@@ -36,7 +36,7 @@ jobs:
             /usr/local/vitasdk
             /home/runner/vdpm
             /home/runner/vita-packages-extra
-          key: vitasdk-fixed-${{ runner.os }}-v3
+          key: vitasdk-fixed-${{ runner.os }}-v4
           restore-keys: |
             vitasdk-fixed-${{ runner.os }}-
 
@@ -84,18 +84,18 @@ jobs:
           # Remove ALL libelf packages that could interfere
           sudo apt-get purge -y libelf-dev libelf1 elfutils libelf0 || true
           sudo apt-get autoremove -y || true
-          sudo apt-get install -y cmake libarchive-tools fakeroot zip git pkg-config xz-utils unzip build-essential
+          sudo apt-get install -y cmake libarchive-tools fakeroot zip git pkg-config xz-utils unzip build-essential patch
 
       # 8. Bootstrap VitaSDK with proper libelf handling (if cache miss)
       - name: Bootstrap VitaSDK with relocation fix
         if: steps.cache-vitasdk.outputs.cache-hit != 'true'
         run: |
-          # Clone vdpm
+          # Clone vdpm using master branch (not main)
           git clone https://github.com/vitasdk/vdpm /home/runner/vdpm
           cd /home/runner/vdpm
           
-          # Ensure we're using the latest commit with relocation fixes
-          git pull origin main
+          # Ensure we're on the latest master commit
+          git pull origin master
           
           # Bootstrap VitaSDK - this will build vita-elf-create with bundled libelf
           ./bootstrap-vitasdk.sh
@@ -171,7 +171,7 @@ jobs:
             /usr/local/vitasdk
             /home/runner/vdpm
             /home/runner/vita-packages-extra
-          key: vitasdk-fixed-${{ runner.os }}-v3
+          key: vitasdk-fixed-${{ runner.os }}-v4
 
       - name: Save SCons outputs
         if: always()
