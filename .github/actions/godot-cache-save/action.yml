@@ -1,19 +1,17 @@
-# .github/actions/godot-cache-save/action.yml
 name: Save Godot build cache
-description: Save the SCons cache directory.
+description: Save Godot build cache.
 inputs:
   cache-name:
-    description: Base name for the cache (job name by default).
-    default: "${{ github.job }}"
+    description: The cache base name (job name by default).
+    default: "${{github.job}}"
   scons-cache:
-    description: Path to the SCons cache directory.
-    default: "${{ github.workspace }}/.scons-cache/"
+    description: The scons cache path.
+    default: "${{github.workspace}}/.scons-cache/"
 runs:
   using: "composite"
   steps:
-    - name: Save .scons-cache
+    - name: Save .scons_cache directory
       uses: actions/cache/save@v4
       with:
-        path: ${{ inputs.scons-cache }}
-        # Match the same key used in restore (omit SHA)
-        key: ${{ inputs.cache-name }}-${{ env.GODOT_BASE_BRANCH }}-${{ github.ref }}
+        path: ${{inputs.scons-cache}}
+        key: ${{inputs.cache-name}}-${{env.GODOT_BASE_BRANCH}}-${{github.ref}}-${{github.sha}}
