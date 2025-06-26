@@ -120,13 +120,16 @@ jobs:
           echo "[$(date)] Installing VitaSDK packages..."
           ./install-all.sh
           
+          # Add both VitaSDK and vdpm to PATH before using vdpm commands
+          echo "$VITASDK/bin" >> $GITHUB_PATH
+          echo "/home/runner/vdpm" >> $GITHUB_PATH
+          export PATH="$VITASDK/bin:/home/runner/vdpm:$PATH"
+          
           echo "[$(date)] Installing vita-toolchain (with relocation fix)..."
-          vdpm -f vita-toolchain
+          /home/runner/vdpm/vdpm -f vita-toolchain
           
           echo "[$(date)] Installing vita-rss-libdl..."
-          vdpm vita-rss-libdl
-          
-          echo "$VITASDK/bin" >> $GITHUB_PATH
+          /home/runner/vdpm/vdpm vita-rss-libdl
           
           # Memory check after installation
           echo "=== Memory after VitaSDK install ==="
@@ -141,7 +144,7 @@ jobs:
           git clone https://github.com/isage/vita-packages-extra /home/runner/vita-packages-extra
           cd /home/runner/vita-packages-extra/pvr_psp2
           vita-makepkg
-          vdpm *-arm.tar.xz
+          /home/runner/vdpm/vdpm *-arm.tar.xz
           echo "[$(date)] PVR_PSP2 installation complete"
 
       # 11. Ensure VitaSDK is in PATH (for cache hits)
