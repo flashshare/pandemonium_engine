@@ -7,8 +7,8 @@ env:
   VITASDK: /usr/local/vitasdk
   CCACHE_DIR: /home/runner/.ccache
   CCACHE_MAXSIZE: 2G
-  # Critical fix: Add ARM-specific compiler flags to prevent relocation errors
-  SCONSFLAGS: -Q --implicit-cache -j2 verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=True CXXFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables" CCFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables" LINKFLAGS="-Wl,--no-eh-frame-hdr"
+  # Fixed: Properly quote compiler flags to prevent shell parsing issues
+  SCONSFLAGS: '-Q --implicit-cache -j2 verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=True CXXFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables" CCFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables" LINKFLAGS="-Wl,--no-eh-frame-hdr"'
 
 concurrency:
   group: vita-${{ github.ref }}
@@ -132,7 +132,7 @@ jobs:
           echo "VITASDK: $VITASDK"
           ls -la $VITASDK/bin/ | head -10
 
-      # 13. Compile Godot for Vita with enhanced error handling
+      # 13. Compile Godot for Vita with proper argument handling
       - name: Compile Godot for Vita
         run: |
           echo "Starting Godot build..."
@@ -145,8 +145,8 @@ jobs:
           export RANLIB="arm-vita-eabi-ranlib"
           export STRIP="arm-vita-eabi-strip"
           
-          # Run SCons with verbose output for debugging
-          scons platform=vita target=release tools=false ${{ env.SCONSFLAGS }} -j2
+          # Method 1: Use eval to properly expand the SCONSFLAGS
+          eval "scons platform=vita target=release tools=false $SCONSFLAGS -j2"
           
           # Verify the final binary exists
           if [ -f "temp-build/vita_release.velf" ]; then
