@@ -7,7 +7,8 @@ env:
   VITASDK: /usr/local/vitasdk
   CCACHE_DIR: /home/runner/.ccache
   CCACHE_MAXSIZE: 2G
-  SCONSFLAGS: -Q --implicit-cache -j2 verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=True
+  # Critical fix: Add ARM-specific compiler flags to prevent relocation errors
+  SCONSFLAGS: -Q --implicit-cache -j2 verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=True CXXFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables" CCFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables" LINKFLAGS="-Wl,--no-eh-frame-hdr"
 
 concurrency:
   group: vita-${{ github.ref }}
@@ -36,7 +37,7 @@ jobs:
             /usr/local/vitasdk
             /home/runner/vdpm
             /home/runner/vita-packages-extra
-          key: vitasdk-manual-${{ runner.os }}-v5
+          key: vitasdk-manual-${{ runner.os }}-v6
           restore-keys: |
             vitasdk-manual-${{ runner.os }}-
 
@@ -83,7 +84,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake libarchive-tools fakeroot zip git pkg-config xz-utils unzip
 
-      # 8. Bootstrap VitaSDK (if cache miss) - using the working approach
+      # 8. Bootstrap VitaSDK (if cache miss)
       - name: Bootstrap VitaSDK
         if: steps.cache-vitasdk.outputs.cache-hit != 'true'
         run: |
@@ -120,13 +121,64 @@ jobs:
           echo "$VITASDK/bin" >> $GITHUB_PATH
           echo "/home/runner/vdpm" >> $GITHUB_PATH
 
-      # 12. Compile Godot for Vita
+      # 12. Verify compiler flags and build environment
+      - name: Verify build environment
+        run: |
+          echo "=== Compiler Version ==="
+          arm-vita-eabi-gcc --version
+          echo "=== Build Flags ==="
+          echo "SCONSFLAGS: $SCONSFLAGS"
+          echo "=== VitaSDK Path ==="
+          echo "VITASDK: $VITASDK"
+          ls -la $VITASDK/bin/ | head -10
+
+      # 13. Compile Godot for Vita with enhanced error handling
       - name: Compile Godot for Vita
         run: |
           echo "Starting Godot build..."
-          scons platform=vita target=release tools=false ${{ env.SCONSFLAGS }}
+          echo "Using SCons flags: $SCONSFLAGS"
+          
+          # Set additional environment variables to ensure flags are applied
+          export CC="arm-vita-eabi-gcc"
+          export CXX="arm-vita-eabi-g++"
+          export AR="arm-vita-eabi-ar"
+          export RANLIB="arm-vita-eabi-ranlib"
+          export STRIP="arm-vita-eabi-strip"
+          
+          # Run SCons with verbose output for debugging
+          scons platform=vita target=release tools=false ${{ env.SCONSFLAGS }} -j2
+          
+          # Verify the final binary exists
+          if [ -f "temp-build/vita_release.velf" ]; then
+            echo "✅ Build successful! VELF file created."
+            ls -la temp-build/vita_release*
+          else
+            echo "❌ Build failed! VELF file not found."
+            exit 1
+          fi
 
-      # 13. Always save caches
+      # 14. Validate output and create backup
+      - name: Validate and backup build artifacts
+        run: |
+          # Create backup of successful build
+          mkdir -p build-artifacts
+          
+          if [ -f "temp-build/vita_release.velf" ]; then
+            cp temp-build/vita_release.velf build-artifacts/
+            echo "✅ VELF file backed up successfully"
+            
+            # Display file information
+            echo "=== Build Artifacts ==="
+            ls -la build-artifacts/
+            file build-artifacts/vita_release.velf
+          fi
+          
+          # Log build completion
+          echo "=== Build Summary ==="
+          echo "Build completed at: $(date)"
+          echo "Build flags used: $SCONSFLAGS"
+
+      # 15. Always save caches (even on failure for debugging)
       - name: Save VitaSDK cache
         if: always() && steps.cache-vitasdk.outputs.cache-hit != 'true'
         uses: actions/cache@v4
@@ -135,7 +187,7 @@ jobs:
             /usr/local/vitasdk
             /home/runner/vdpm
             /home/runner/vita-packages-extra
-          key: vitasdk-manual-${{ runner.os }}-v5
+          key: vitasdk-manual-${{ runner.os }}-v6
 
       - name: Save SCons outputs
         if: always()
@@ -153,10 +205,35 @@ jobs:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-vita-${{ runner.os }}-${{ github.ref }}
 
-      # 14. Upload VELF artifact
+      # 16. Upload artifacts with error recovery
       - name: Upload VELF artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: godot-vita-release
-          path: temp-build/vita_release.velf
+          name: godot-vita-release-${{ github.sha }}
+          path: |
+            temp-build/vita_release.velf
+            build-artifacts/
+          retention-days: 30
           overwrite: true
+          
+      # 17. Debug information on failure
+      - name: Debug build failure
+        if: failure()
+        run: |
+          echo "=== Build Failed - Debug Information ==="
+          echo "Last 50 lines of build output:"
+          tail -n 50 .scons-cache/scons.log 2>/dev/null || echo "No SCons log found"
+          
+          echo "=== Checking for common issues ==="
+          echo "VitaSDK installation:"
+          ls -la $VITASDK/ || echo "VitaSDK not found"
+          
+          echo "Compiler availability:"
+          which arm-vita-eabi-gcc || echo "Compiler not in PATH"
+          
+          echo "Environment variables:"
+          env | grep -E "(VITA|SCONS|CC)" || echo "No relevant env vars"
+          
+          echo "=== Temp build directory ==="
+          ls -la temp-build/ 2>/dev/null || echo "No temp-build directory"
