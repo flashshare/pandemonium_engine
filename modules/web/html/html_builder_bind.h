@@ -33,6 +33,7 @@
 /*************************************************************************/
 
 #include "core/object/object.h"
+#include "core/string/string_builder.h"
 #include "core/string/ustring.h"
 
 #include "core/object/reference.h"
@@ -231,10 +232,11 @@ public:
 
 	_HTMLBuilder *owner;
 	bool simple;
-	String result;
 
 protected:
 	static void _bind_methods();
+
+	StringBuilder result;
 };
 
 class _HTMLBuilder : public Reference {
@@ -560,16 +562,16 @@ public:
 	Ref<_HTMLBuilder> we(const String &val);
 
 	Ref<_HTMLBuilder> write_tag();
+	void write_tag_internal();
 
 	_HTMLBuilder();
 	virtual ~_HTMLBuilder();
-
-	String result;
 
 protected:
 	static void _bind_methods();
 
 	Ref<_HTMLTag> _tag;
+	StringBuilder result;
 };
 
 #endif

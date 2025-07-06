@@ -33,6 +33,7 @@
 /*************************************************************************/
 
 #include "core/string/ustring.h"
+#include "core/string/string_builder.h"
 
 #include "core/object/reference.h"
 
@@ -43,7 +44,9 @@ class WebServerRequest;
 class HTMLTag {
 public:
 	bool simple;
-	String result;
+
+	String get_result();
+	void set_result(const String &str);
 
 	HTMLTag *str(const String &str);
 	HTMLTag *style(const String &val);
@@ -225,11 +228,15 @@ public:
 	HTMLTag();
 
 	HTMLBuilder *owner;
+
+protected:
+	StringBuilder result;
 };
 
 class HTMLBuilder {
 public:
-	String result;
+	String get_result();
+	void set_result(const String &str);
 
 	HTMLBuilder *comment(const String &val);
 	HTMLTag *doctype();
@@ -589,6 +596,8 @@ public:
 
 protected:
 	HTMLTag _tag;
+
+	StringBuilder result;
 };
 
 #endif

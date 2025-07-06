@@ -45,27 +45,26 @@ void VisualInstance::_refresh_portal_mode() {
 	RenderingServer::get_singleton()->instance_set_portal_mode(instance, (RenderingServer::InstancePortalMode)get_portal_mode());
 }
 
-void VisualInstance::_update_visibility() {
+void VisualInstance::_update_server_visibility_and_xform(bool p_force_refresh_server) {
 	if (!is_inside_tree()) {
 		return;
 	}
 
 	bool visible = is_visible_in_tree();
 
-	// keep a quick flag available in each node.
-	// no need to call is_visible_in_tree all over the place,
-	// providing it is propagated with a notification.
-	bool already_visible = _is_vi_visible();
-	_set_vi_visible(visible);
-
-	// if making visible, make sure the visual server is up to date with the transform
-	if (visible && (!already_visible)) {
+	// As xforms are not always updated for invisible nodes, there are two circumstances
+	// where we want to ensure the server has an up to date xform:
+	// 1) When making a node visible.
+	// 2) When the node enters the scene.
+	if (visible || p_force_refresh_server) {
 		if (!_is_using_identity_transform()) {
 			Transform gt = get_global_transform();
 			RenderingServer::get_singleton()->instance_set_transform(instance, gt);
 		}
 	}
 
+	// Aside from entering the scene, there will always have been a visibility change,
+	// so update this in all cases.
 	_change_notify("visible");
 	RS::get_singleton()->instance_set_visible(get_instance(), visible);
 }
@@ -85,7 +84,7 @@ void VisualInstance::set_instance_use_identity_transform(bool p_enable) {
 	}
 }
 
-void VisualInstance::fti_update_servers() {
+void VisualInstance::fti_update_servers_xform() {
 	if (!_is_using_identity_transform()) {
 		RenderingServer::get_singleton()->instance_set_transform(get_instance(), _get_cached_global_transform_interpolated());
 	}
@@ -102,41 +101,23 @@ void VisualInstance::_notification(int p_what) {
 			*/
 			ERR_FAIL_COND(get_world_3d().is_null());
 			RenderingServer::get_singleton()->instance_set_scenario(instance, get_world_3d()->get_scenario());
-			_update_visibility();
-
+			_update_server_visibility_and_xform(true);
 		} break;
 		case NOTIFICATION_TRANSFORM_CHANGED: {
-			if (_is_vi_visible()) {
-				if (!_is_using_identity_transform()) {
-					// Physics interpolated VIs don't need to send their transform immediately after setting,
-					// indeed it is counterproductive, because the interpolated transform will be sent
-					// to the VisualServer immediately prior to rendering.
-					if (!is_physics_interpolated_and_enabled()) {
-						RenderingServer::get_singleton()->instance_set_transform(instance, get_global_transform());
-					} else {
-						// For instance when first adding to the tree, when the previous transform is
-						// unset, to prevent streaking from the origin.
-						if (_is_physics_interpolation_reset_requested() && is_inside_tree()) {
-							if (_is_vi_visible()) {
-								_notification(NOTIFICATION_RESET_PHYSICS_INTERPOLATION);
-							}
-							_set_physics_interpolation_reset_requested(false);
-						}
-					}
-				}
+			// NOTIFICATION normally turned off for physics interpolated cases (via
+			// `notify_transform_when_fti_off`), however derived classes can still turn this back on,
+			// so always wrap with is_physics_interpolation_enabled().
+			if (is_visible_in_tree() && !(is_inside_tree() && get_tree()->is_physics_interpolation_enabled()) && !_is_using_identity_transform()) {
+				// Physics interpolation global off, always send.
+				RenderingServer::get_singleton()->instance_set_transform(instance, get_global_transform());
 			}
 		} break;
 		case NOTIFICATION_EXIT_WORLD: {
 			RenderingServer::get_singleton()->instance_set_scenario(instance, RID());
 			RenderingServer::get_singleton()->instance_attach_skeleton(instance, RID());
-
-			// the vi visible flag is always set to invisible when outside the tree,
-			// so it can detect re-entering the tree and becoming visible, and send
-			// the transform to the visual server
-			_set_vi_visible(false);
 		} break;
 		case NOTIFICATION_VISIBILITY_CHANGED: {
-			_update_visibility();
+			_update_server_visibility_and_xform(false);
 		} break;
 	}
 }
@@ -227,7 +208,7 @@ VisualInstance::VisualInstance() {
 	layers = 1;
 	sorting_offset = 0.0f;
 	sorting_use_aabb_center = true;
-	set_notify_transform(true);
+	_set_notify_transform_when_fti_off(true);
 }
 
 VisualInstance::~VisualInstance() {

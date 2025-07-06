@@ -50,12 +50,13 @@ def create_template_zip(env, js, wasm, extra):
         zip_dir.File(binary_name + ".wasm"),
         zip_dir.File(binary_name + ".audio.worklet.js"),
     ]
+
     # GDNative/Threads specific
     if env["gdnative_enabled"]:
-        in_files.append(extra)  # Runtime
+        in_files.append(extra.pop())  # Runtime
         out_files.append(zip_dir.File(binary_name + ".side.wasm"))
-    elif env["threads_enabled"]:
-        in_files.append(extra)  # Worker
+    if env["threads_enabled"]:
+        in_files.append(extra.pop())  # Worker
         out_files.append(zip_dir.File(binary_name + ".worker.js"))
 
     service_worker = "#misc/dist/html/service-worker.js"
