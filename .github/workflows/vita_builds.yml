@@ -4,8 +4,9 @@ on: [push, pull_request]
 # Global Settings
 env:
   GODOT_BASE_BRANCH: 3.x
-  SCONSFLAGS: verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=True
   VITASDK: /usr/local/vitasdk
+  # Pin to specific vita-packages-extra commit to avoid recent problematic changes
+  VITA_PACKAGES_EXTRA_COMMIT: 199143b938dca96ceb68a01ad7149fca11998ae4
   EUID: 1 makepkg
 
 concurrency:
@@ -27,27 +28,79 @@ jobs:
       - name: Setup python and scons
         uses: ./.github/actions/godot-deps
 
-      - name: Setup VitaSDK
+      - name: Setup VitaSDK with Pinned Dependencies
         run: |
+          sudo apt-get update
           sudo apt-get install cmake libarchive-tools fakeroot zip -y
+          
+          # Clone and setup vdpm
           git clone https://github.com/vitasdk/vdpm
-          git clone https://github.com/isage/vita-packages-extra
           cd vdpm
           ./bootstrap-vitasdk.sh
           ./install-all.sh
           export PATH=$VITASDK/bin:$PATH
           vdpm vita-rss-libdl
-          cd ../vita-packages-extra/pvr_psp2
+          cd ..
+          
+          # Pin vita-packages-extra to specific commit
+          echo "Using vita-packages-extra commit: $VITA_PACKAGES_EXTRA_COMMIT"
+          git clone https://github.com/isage/vita-packages-extra
+          cd vita-packages-extra
+          git checkout $VITA_PACKAGES_EXTRA_COMMIT
+          echo "Checked out commit: $(git rev-parse HEAD)"
+          cd pvr_psp2
           vita-makepkg
           vdpm *-arm.tar.xz
+          echo "✅ VitaSDK setup complete with pinned dependencies"
 
-      - name: Compilation
-        uses: ./.github/actions/godot-build
-        with:
-          sconsflags: ${{ env.SCONSFLAGS }}
-          platform: vita
-          target: release
-          tools: false
+      # CRITICAL: Use bash array method to prevent shell argument parsing issues
+      - name: Compilation with ARM Relocation Fix
+        run: |
+          echo "Starting Godot build with ARM relocation type 25 fix..."
+          echo "Using vita-packages-extra commit: $VITA_PACKAGES_EXTRA_COMMIT"
+          
+          # Set compiler environment variables
+          export CC="arm-vita-eabi-gcc"
+          export CXX="arm-vita-eabi-g++"
+          export AR="arm-vita-eabi-ar"
+          export RANLIB="arm-vita-eabi-ranlib"
+          export STRIP="arm-vita-eabi-strip"
+          export PATH=$VITASDK/bin:$PATH
+          
+          # SOLUTION: Use bash arrays to handle complex arguments properly
+          # This completely bypasses shell argument parsing issues
+          declare -a SCONS_ARGS=(
+            "platform=vita"
+            "target=release"
+            "tools=false"
+            "verbose=no"
+            "warnings=no"
+            "werror=no"
+            "debug_symbols=no"
+            "use_rtti=True"
+            "disable_gles3=True"
+            # ARM.exidx prevention flags (prevent relocation type 25 error)
+            "CXXFLAGS=-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables"
+            "CCFLAGS=-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables"
+            "LINKFLAGS=-Wl,--no-eh-frame-hdr -Wl,--gc-sections"
+          )
+          
+          # Display the exact arguments being used
+          echo "=== SCons Arguments ==="
+          printf '  %s\n' "${SCONS_ARGS[@]}"
+          
+          # Execute SCons with the array - this prevents shell parsing issues
+          scons "${SCONS_ARGS[@]}"
+          
+          # Verify the final binary exists
+          if [[ -f "temp-build/vita_release.velf" ]]; then
+            echo "✅ Build successful! VELF file created."
+            ls -la temp-build/vita_release*
+          else
+            echo "❌ Build failed! VELF file not found."
+            ls -la temp-build/ || echo "No temp-build directory"
+            exit 1
+          fi
 
       - name: Save Godot build cache
         uses: ./.github/actions/godot-cache-save
@@ -57,3 +110,27 @@ jobs:
 
       - name: Upload artifact
         uses: ./.github/actions/upload-artifact
+        with:
+          name: godot-vita-release-${{ github.sha }}-fixed
+          path: |
+            temp-build/vita_release.velf
+            temp-build/godot.vita.opt.32
+
+      # Debug information for troubleshooting
+      - name: Debug build information
+        if: always()
+        run: |
+          echo "=== Build Summary ==="
+          echo "Build completed at: $(date)"
+          echo "vita-packages-extra commit: $VITA_PACKAGES_EXTRA_COMMIT"
+          echo "VitaSDK version: $(cat $VITASDK/version.txt 2>/dev/null || echo 'Unknown')"
+          echo "Compiler version: $(arm-vita-eabi-gcc --version | head -1 2>/dev/null || echo 'Unknown')"
+          
+          echo "=== Build Artifacts ==="
+          ls -la temp-build/ 2>/dev/null || echo "No temp-build directory"
+          
+          if [[ -f "temp-build/vita_release.velf" ]]; then
+            echo "=== VELF File Information ==="
+            file temp-build/vita_release.velf
+            du -h temp-build/vita_release.velf
+          fi
