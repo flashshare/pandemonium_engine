@@ -1,7 +1,7 @@
 name: 🎮 PSVita Builds
+
 on: [push, pull_request]
 
-# Global Settings
 env:
   GODOT_BASE_BRANCH: 3.x
   SCONSFLAGS: verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=True
@@ -9,19 +9,19 @@ env:
   EUID: 1 makepkg
 
 concurrency:
-  group: ci-${{github.actor}}-${{github.head_ref || github.run_number}}-${{github.ref}}-vita
+  group: ci-${{ github.actor }}-${{ github.head_ref || github.run_number }}-${{ github.ref }}-vita
   cancel-in-progress: true
 
 jobs:
   vita-template:
-    runs-on: "ubuntu-24.04"
     name: Template (target=release, tools=no)
+    runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          submodules: recursive  # Fetch all submodules
+          submodules: recursive
+          fetch-depth: 1
 
       - name: Restore Godot build cache
         uses: ./.github/actions/godot-cache-restore
@@ -32,7 +32,8 @@ jobs:
 
       - name: Setup VitaSDK
         run: |
-          sudo apt-get install cmake libarchive-tools fakeroot zip -y
+          sudo apt-get update
+          sudo apt-get install -y cmake libarchive-tools fakeroot zip git
           git clone https://github.com/vitasdk/vdpm
           git clone https://github.com/isage/vita-packages-extra
           cd vdpm
@@ -40,7 +41,10 @@ jobs:
           ./install-all.sh
           export PATH=$VITASDK/bin:$PATH
           vdpm vita-rss-libdl
-          cd ../vita-packages-extra/pvr_psp2
+          # Use a specific commit of vita-packages-extra for stability
+          cd ../vita-packages-extra
+          git checkout 199143b938dca96ceb68a01ad7149fca11998ae4
+          cd pvr_psp2
           vita-makepkg
           vdpm *-arm.tar.xz
 
@@ -55,8 +59,12 @@ jobs:
       - name: Save Godot build cache
         uses: ./.github/actions/godot-cache-save
         with:
-          cache-name: ${{ matrix.cache-name }}
+          cache-name: ${{ github.job }}-vita
         continue-on-error: true
 
       - name: Upload artifact
-        uses: ./.github/actions/upload-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-vita-release
+          path: temp-build/vita_release.velf
+          overwrite: true
