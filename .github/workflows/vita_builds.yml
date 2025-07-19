@@ -40,6 +40,7 @@ jobs:
           echo "=== Installing VitaSDK Version: $VITASDK_VERSION ==="
           wget -q "$VITASDK_URL"
           sudo tar -xf "${VITASDK_VERSION}.tar.bz2" -C /usr/local/
+          sudo chown -R $USER:$USER /usr/local/vitasdk
           export VITASDK=/usr/local/vitasdk
           export PATH=$VITASDK/bin:$PATH
           echo "VITASDK=/usr/local/vitasdk" >> $GITHUB_ENV
