@@ -6,7 +6,7 @@ env:
   GODOT_BASE_BRANCH: 3.x
   VITASDK: /usr/local/vitasdk
   # Pin to specific vita-packages-extra commit to avoid recent problematic changes
-  VITA_PACKAGES_EXTRA_COMMIT: 199143b938dca96ceb68a01ad7149fca11998ae4
+  VITA_PACKAGES_EXTRA_COMMIT: d96ca70a3afa0eff6009ec7500afc7f3068933c1
   EUID: 1 makepkg
 
 concurrency:
