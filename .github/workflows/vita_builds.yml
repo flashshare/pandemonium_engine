@@ -4,10 +4,10 @@ on: [push, pull_request]
 # Global Settings
 env:
   GODOT_BASE_BRANCH: 3.x
+  SCONSFLAGS: verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=True
   VITASDK: /usr/local/vitasdk
-  # Pin to specific VitaSDK version that worked in March 2025
+  # Pin to working versions from your successful build period
   VITASDK_VERSION: "vitasdk-x86_64-linux-gnu-2025-03-11_15-12-52"
-  # Pin to specific vita-packages-extra commit to avoid recent problematic changes
   VITA_PACKAGES_EXTRA_COMMIT: d96ca70a3afa0eff6009ec7500afc7f3068933c1
   EUID: 1
 
@@ -21,7 +21,10 @@ jobs:
     name: Template (target=release, tools=no)
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Restore Godot build cache
         uses: ./.github/actions/godot-cache-restore
@@ -30,86 +33,46 @@ jobs:
       - name: Setup python and scons
         uses: ./.github/actions/godot-deps
 
-      - name: Setup VitaSDK with Exact Working Version
+      - name: Setup VitaSDK (Pinned to Working Version)
         run: |
           sudo apt-get update
           sudo apt-get install cmake libarchive-tools fakeroot zip wget -y
           
-          echo "=== Installing Exact VitaSDK Version ==="
-          echo "Version: $VITASDK_VERSION"
-          
-          # Download the exact working VitaSDK version from March 2025
+          # Use the exact VitaSDK version that worked in your May 2025 build
+          echo "Installing VitaSDK version: $VITASDK_VERSION"
           wget -q "https://github.com/vitasdk/autobuilds/releases/download/master-linux-v2.529/${VITASDK_VERSION}.tar.bz2"
-          
-          # Extract to exact location
           sudo tar -xf "${VITASDK_VERSION}.tar.bz2" -C /usr/local/
           
-          # Set environment variables for this session
+          # Set up environment
           export VITASDK=/usr/local/vitasdk
           export PATH=$VITASDK/bin:$PATH
           echo "VITASDK=/usr/local/vitasdk" >> $GITHUB_ENV
           echo "/usr/local/vitasdk/bin" >> $GITHUB_PATH
           
-          # Verify toolchain installation
-          echo "=== VitaSDK Verification ==="
-          arm-vita-eabi-gcc --version | head -1
-          vita-elf-create --version || echo "vita-elf-create available"
-          
-          echo "=== Installing vdpm and vita-rss-libdl ==="
+          # Install dependencies using your original approach but with pinned versions
           git clone https://github.com/vitasdk/vdpm
           cd vdpm
           ./install-all.sh
           vdpm vita-rss-libdl
           cd ..
           
-          echo "=== Installing Pinned vita-packages-extra ==="
+          # Pin vita-packages-extra to your working commit
           git clone https://github.com/isage/vita-packages-extra
           cd vita-packages-extra
           git checkout $VITA_PACKAGES_EXTRA_COMMIT
           cd pvr_psp2
           vita-makepkg
           vdpm *-arm.tar.xz
-          echo "✅ VitaSDK setup complete"
+          
+          echo "✅ VitaSDK setup complete with pinned versions"
 
-      - name: Compilation with RTTI Enabled and ARM Fixes
-        run: |
-          echo "=== Starting Godot Build with RTTI Enabled ==="
-          
-          # Ensure toolchain is in PATH
-          export VITASDK=/usr/local/vitasdk
-          export PATH=$VITASDK/bin:$PATH
-          
-          # Set ARM cross-compilation environment
-          export CC="arm-vita-eabi-gcc"
-          export CXX="arm-vita-eabi-g++"
-          export AR="arm-vita-eabi-ar"
-          export RANLIB="arm-vita-eabi-ranlib"
-          export STRIP="arm-vita-eabi-strip"
-          
-          # Build with RTTI enabled and ARM relocation fixes
-          # REMOVED -fno-rtti to allow dynamic_cast in Object::cast_to
-          scons platform=vita \
-                target=release \
-                tools=false \
-                verbose=no \
-                warnings=no \
-                werror=no \
-                debug_symbols=no \
-                use_rtti=True \
-                disable_gles3=True \
-                CXXFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -Wno-psabi" \
-                CCFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -Wno-psabi" \
-                LINKFLAGS="-Wl,--no-eh-frame-hdr -Wl,--gc-sections -Wl,--strip-all"
-          
-          # Verify build success
-          if [[ -f "temp-build/vita_release.velf" ]]; then
-            echo "✅ Build successful! VELF file created."
-            ls -la temp-build/vita_release*
-          else
-            echo "❌ Build failed! VELF file not found."
-            find temp-build/ -name "*vita*" -o -name "*.velf" 2>/dev/null || echo "No relevant files found"
-            exit 1
-          fi
+      - name: Compilation
+        uses: ./.github/actions/godot-build
+        with:
+          sconsflags: ${{ env.SCONSFLAGS }}
+          platform: vita
+          target: release
+          tools: false
 
       - name: Save Godot build cache
         uses: ./.github/actions/godot-cache-save
@@ -120,27 +83,20 @@ jobs:
       - name: Upload artifact
         uses: ./.github/actions/upload-artifact
         with:
-          name: godot-vita-release-${{ github.sha }}-rtti-fixed
+          name: godot-vita-release-${{ github.sha }}-stable
           path: |
             temp-build/vita_release.velf
             temp-build/godot.vita.opt.32
             temp-build/vita_release/
 
-      - name: Debug Build Information
-        if: always()
+      - name: Verify Build Success
         run: |
-          echo "=== Build Summary ==="
-          echo "Build completed at: $(date)"
-          echo "VitaSDK version: $VITASDK_VERSION"
-          echo "vita-packages-extra commit: $VITA_PACKAGES_EXTRA_COMMIT"
-          echo "RTTI Status: ENABLED (use_rtti=True)"
-          echo "Compiler version: $(arm-vita-eabi-gcc --version | head -1 2>/dev/null || echo 'Unknown')"
-          
+          echo "=== Build Verification ==="
           if [[ -f "temp-build/vita_release.velf" ]]; then
-            echo "=== VELF File Information ==="
-            file temp-build/vita_release.velf 2>/dev/null || echo "File command failed"
-            du -h temp-build/vita_release.velf 2>/dev/null || echo "Size check failed"
-            echo "Build Status: ✅ SUCCESS"
+            echo "✅ VELF file successfully created"
+            ls -la temp-build/vita_release*
+            file temp-build/vita_release.velf
           else
-            echo "Build Status: ❌ FAILED"
+            echo "❌ Build verification failed"
+            ls -la temp-build/ 2>/dev/null || echo "No temp-build directory"
           fi
