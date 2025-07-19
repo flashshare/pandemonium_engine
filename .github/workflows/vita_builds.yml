@@ -54,30 +54,26 @@ jobs:
           echo "=== VitaSDK Verification ==="
           arm-vita-eabi-gcc --version | head -1
           vita-elf-create --version || echo "vita-elf-create available"
-          ls -la $VITASDK/bin/ | grep -E "(arm-vita-eabi|vita-)" | head -5
           
           echo "=== Installing vdpm and vita-rss-libdl ==="
           git clone https://github.com/vitasdk/vdpm
           cd vdpm
-          # Use the vdpm but with our fixed VitaSDK
           ./install-all.sh
           vdpm vita-rss-libdl
           cd ..
           
           echo "=== Installing Pinned vita-packages-extra ==="
-          echo "Using vita-packages-extra commit: $VITA_PACKAGES_EXTRA_COMMIT"
           git clone https://github.com/isage/vita-packages-extra
           cd vita-packages-extra
           git checkout $VITA_PACKAGES_EXTRA_COMMIT
-          echo "Checked out commit: $(git rev-parse HEAD)"
           cd pvr_psp2
           vita-makepkg
           vdpm *-arm.tar.xz
-          echo "✅ VitaSDK setup complete with pinned dependencies"
+          echo "✅ VitaSDK setup complete"
 
-      - name: Compilation with ARM Relocation Type 25 Fix
+      - name: Compilation with RTTI Enabled and ARM Fixes
         run: |
-          echo "=== Starting Godot Build with Relocation Fixes ==="
+          echo "=== Starting Godot Build with RTTI Enabled ==="
           
           # Ensure toolchain is in PATH
           export VITASDK=/usr/local/vitasdk
@@ -90,8 +86,8 @@ jobs:
           export RANLIB="arm-vita-eabi-ranlib"
           export STRIP="arm-vita-eabi-strip"
           
-          # Build with ARM relocation type 25 fixes
-          # These flags prevent generation of problematic ARM.exidx sections and relocations
+          # Build with RTTI enabled and ARM relocation fixes
+          # REMOVED -fno-rtti to allow dynamic_cast in Object::cast_to
           scons platform=vita \
                 target=release \
                 tools=false \
@@ -101,7 +97,7 @@ jobs:
                 debug_symbols=no \
                 use_rtti=True \
                 disable_gles3=True \
-                CXXFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-rtti -Wno-psabi" \
+                CXXFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -Wno-psabi" \
                 CCFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -Wno-psabi" \
                 LINKFLAGS="-Wl,--no-eh-frame-hdr -Wl,--gc-sections -Wl,--strip-all"
           
@@ -111,7 +107,6 @@ jobs:
             ls -la temp-build/vita_release*
           else
             echo "❌ Build failed! VELF file not found."
-            echo "=== Debug Information ==="
             find temp-build/ -name "*vita*" -o -name "*.velf" 2>/dev/null || echo "No relevant files found"
             exit 1
           fi
@@ -125,13 +120,12 @@ jobs:
       - name: Upload artifact
         uses: ./.github/actions/upload-artifact
         with:
-          name: godot-vita-release-${{ github.sha }}-fixed-relocation
+          name: godot-vita-release-${{ github.sha }}-rtti-fixed
           path: |
             temp-build/vita_release.velf
             temp-build/godot.vita.opt.32
             temp-build/vita_release/
 
-      # Enhanced debug information
       - name: Debug Build Information
         if: always()
         run: |
@@ -139,11 +133,8 @@ jobs:
           echo "Build completed at: $(date)"
           echo "VitaSDK version: $VITASDK_VERSION"
           echo "vita-packages-extra commit: $VITA_PACKAGES_EXTRA_COMMIT"
+          echo "RTTI Status: ENABLED (use_rtti=True)"
           echo "Compiler version: $(arm-vita-eabi-gcc --version | head -1 2>/dev/null || echo 'Unknown')"
-          echo "vita-elf-create available: $(which vita-elf-create 2>/dev/null || echo 'Not found')"
-          
-          echo "=== Build Artifacts ==="
-          find temp-build/ -type f 2>/dev/null | head -10 || echo "No temp-build directory"
           
           if [[ -f "temp-build/vita_release.velf" ]]; then
             echo "=== VELF File Information ==="
@@ -153,7 +144,3 @@ jobs:
           else
             echo "Build Status: ❌ FAILED"
           fi
-          
-          echo "=== Environment Variables ==="
-          echo "VITASDK: $VITASDK"
-          echo "PATH includes VitaSDK: $(echo $PATH | grep -o "/usr/local/vitasdk/bin" || echo "Not found")"
