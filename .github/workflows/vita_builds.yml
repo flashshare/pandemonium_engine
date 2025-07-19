@@ -1,13 +1,10 @@
 name: 🎮 PSVita Builds
 on: [push, pull_request]
 
-# Global Settings
 env:
   GODOT_BASE_BRANCH: 3.x
   VITASDK: /usr/local/vitasdk
-  # Pin to specific VitaSDK version that worked in March 2025
   VITASDK_VERSION: "vitasdk-x86_64-linux-gnu-2025-03-11_15-12-52"
-  # Pin to specific vita-packages-extra commit (before SDL2 changes)
   VITA_PACKAGES_EXTRA_COMMIT: d5b66fa7271abac9689541a59110adc17d06a616
   EUID: 1
 
@@ -18,7 +15,7 @@ concurrency:
 jobs:
   vita-template:
     runs-on: "ubuntu-24.04"
-    name: Template (target=release, tools=no)
+    name: Vita Release Build
 
     steps:
       - uses: actions/checkout@v4
@@ -30,67 +27,39 @@ jobs:
       - name: Setup python and scons
         uses: ./.github/actions/godot-deps
 
-      - name: Setup VitaSDK with Multiple VELF Tools
+      - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install cmake libarchive-tools fakeroot zip wget build-essential -y
-          
+          sudo apt-get install -y cmake libarchive-tools fakeroot zip wget libelf-dev
+
+      - name: Setup VitaSDK with Exact Working Version
+        run: |
           echo "=== Installing VitaSDK Version: $VITASDK_VERSION ==="
           wget -q "https://github.com/vitasdk/autobuilds/releases/download/master-linux-v2.529/${VITASDK_VERSION}.tar.bz2"
           sudo tar -xf "${VITASDK_VERSION}.tar.bz2" -C /usr/local/
-          
-          # Set up environment
           export VITASDK=/usr/local/vitasdk
           export PATH=$VITASDK/bin:$PATH
           echo "VITASDK=/usr/local/vitasdk" >> $GITHUB_ENV
           echo "/usr/local/vitasdk/bin" >> $GITHUB_PATH
-          
-          # Backup original vita-elf-create
-          sudo cp /usr/local/vitasdk/bin/vita-elf-create /usr/local/vitasdk/bin/vita-elf-create.original
-          
-          echo "=== Installing Alternative vita-toolchain (Older Version) ==="
-          git clone https://github.com/vitasdk/vita-toolchain.git
-          cd vita-toolchain
-          # Try multiple known working commits
-          git checkout 7dcb85f41d5f6d7dd5e0c2e8e5c6f6d7e3d7e3d7 2>/dev/null || \
-          git checkout 4545e75e68a56e0cdcd35e8cd9fb2cefd1ec4f05 2>/dev/null || \
-          git checkout a1b2c3d4e5f6789012345678901234567890abcd 2>/dev/null || \
-          echo "Using latest available commit"
-          
-          echo "Building alternative vita-elf-create..."
-          mkdir build && cd build
-          cmake .. -DCMAKE_INSTALL_PREFIX=/usr/local/vitasdk
-          make vita-elf-create -j$(nproc) || echo "Build failed, will try alternatives"
-          sudo cp src/vita-elf-create /usr/local/vitasdk/bin/vita-elf-create.alt 2>/dev/null || echo "Alt version not available"
-          cd ../..
-          
-          echo "=== Installing VitaSDK Dependencies ==="
+          echo "=== GCC Version ==="
+          arm-vita-eabi-gcc --version
+          echo "=== Installing vdpm and vita-rss-libdl ==="
           git clone https://github.com/vitasdk/vdpm
           cd vdpm
           ./install-all.sh
           vdpm vita-rss-libdl
           cd ..
-          
           echo "=== Installing Pinned vita-packages-extra ==="
           git clone https://github.com/isage/vita-packages-extra
           cd vita-packages-extra
           git checkout $VITA_PACKAGES_EXTRA_COMMIT
-          echo "Using vita-packages-extra commit: $(git rev-parse HEAD)"
           cd pvr_psp2
           vita-makepkg
           vdpm *-arm.tar.xz
-          
-          # Verify available tools
-          echo "=== Available VELF Creation Tools ==="
-          ls -la /usr/local/vitasdk/bin/vita-elf-create* 2>/dev/null || echo "Standard tools only"
-          
-          echo "✅ VitaSDK setup complete with multiple VELF tools"
+          echo "✅ VitaSDK setup complete"
 
-      - name: Compilation (Fail-Safe with Enhanced Relocation Fixes)
-        id: compilation
+      - name: Compilation with Static Relocation Fixes
         run: |
-          echo "=== Starting Godot Build with Enhanced ARM Fixes ==="
-          
           export VITASDK=/usr/local/vitasdk
           export PATH=$VITASDK/bin:$PATH
           export CC="arm-vita-eabi-gcc"
@@ -99,10 +68,8 @@ jobs:
           export RANLIB="arm-vita-eabi-ranlib"
           export STRIP="arm-vita-eabi-strip"
           
-          BUILD_SUCCESS=false
-          
-          # Build with maximum relocation compatibility flags
-          if scons platform=vita \
+          # Make sure PIC/PIE/unwind is OFF
+          scons platform=vita \
                 target=release \
                 tools=false \
                 verbose=no \
@@ -111,160 +78,44 @@ jobs:
                 debug_symbols=no \
                 use_rtti=True \
                 disable_gles3=True \
-                CXXFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -mno-unaligned-access -marm -Wno-psabi" \
-                CCFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -mno-unaligned-access -marm -Wno-psabi" \
-                LINKFLAGS="-Wl,--fix-cortex-a8 -Wl,--no-enum-size-warning -marm"; then
-            BUILD_SUCCESS=true
-            echo "✅ Build completed successfully!"
-          else
-            BUILD_SUCCESS=false
-            echo "⚠️ Build failed, but preserving progress"
-          fi
+                CXXFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-pic -fno-pie -mno-thumb-interwork -mno-unaligned-access -Wno-psabi" \
+                CCFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-pic -fno-pie -mno-thumb-interwork -mno-unaligned-access -Wno-psabi" \
+                LINKFLAGS="-Wl,--no-eh-frame-hdr -Wl,--gc-sections -Wl,--strip-all -no-pie"
           
-          echo "BUILD_SUCCESS=$BUILD_SUCCESS" >> $GITHUB_OUTPUT
-          exit 0
-
-      - name: Advanced VELF Creation with Multiple Strategies
-        run: |
-          echo "=== Advanced VELF Creation Process ==="
-          export VITASDK=/usr/local/vitasdk
-          export PATH=$VITASDK/bin:$PATH
-          
-          if [[ -f "temp-build/godot.vita.opt.32" ]]; then
-            echo "✅ Executable found: temp-build/godot.vita.opt.32 ($(du -h temp-build/godot.vita.opt.32 | cut -f1))"
-            cd temp-build
-            
-            # Strategy 1: Original vita-elf-create with minimal processing
-            echo "🔧 Strategy 1: Minimal processing"
-            cp godot.vita.opt.32 vita_minimal
-            if vita-elf-create vita_minimal vita_minimal.velf 2>/dev/null; then
-              echo "✅ Strategy 1 SUCCESS: Minimal processing worked!"
-              mv vita_minimal.velf vita_release.velf
-              ls -la vita_release.velf
-              exit 0
-            fi
-            
-            # Strategy 2: Alternative vita-elf-create (if available)
-            echo "🔧 Strategy 2: Alternative vita-elf-create tool"
-            if [[ -f "/usr/local/vitasdk/bin/vita-elf-create.alt" ]]; then
-              cp godot.vita.opt.32 vita_alt
-              if /usr/local/vitasdk/bin/vita-elf-create.alt vita_alt vita_alt.velf 2>/dev/null; then
-                echo "✅ Strategy 2 SUCCESS: Alternative tool worked!"
-                mv vita_alt.velf vita_release.velf
-                ls -la vita_release.velf
-                exit 0
-              fi
-            fi
-            
-            # Strategy 3: Progressive stripping approach
-            echo "🔧 Strategy 3: Progressive stripping"
-            for strip_level in "-g" "--strip-debug" "--strip-unneeded" "--strip-all"; do
-              echo "  Trying strip level: $strip_level"
-              cp godot.vita.opt.32 "vita_strip_$(echo $strip_level | tr -d '-')"
-              arm-vita-eabi-strip $strip_level "vita_strip_$(echo $strip_level | tr -d '-')" 2>/dev/null || continue
-              if vita-elf-create "vita_strip_$(echo $strip_level | tr -d '-')" "vita_strip_$(echo $strip_level | tr -d '-').velf" 2>/dev/null; then
-                echo "✅ Strategy 3 SUCCESS: Strip level $strip_level worked!"
-                mv "vita_strip_$(echo $strip_level | tr -d '-').velf" vita_release.velf
-                ls -la vita_release.velf
-                exit 0
-              fi
-            done
-            
-            # Strategy 4: Objcopy approach (alternative to vita-elf-create)
-            echo "🔧 Strategy 4: Alternative conversion methods"
-            cp godot.vita.opt.32 vita_objcopy
-            if arm-vita-eabi-objcopy --strip-unneeded vita_objcopy vita_objcopy_stripped 2>/dev/null; then
-              if vita-elf-create vita_objcopy_stripped vita_objcopy.velf 2>/dev/null; then
-                echo "✅ Strategy 4 SUCCESS: Objcopy preprocessing worked!"
-                mv vita_objcopy.velf vita_release.velf
-                ls -la vita_release.velf
-                exit 0
-              fi
-            fi
-            
-            echo "❌ All VELF creation strategies failed"
-            echo "📦 Available files for manual processing:"
-            ls -la vita_* godot.vita.opt.32 2>/dev/null
-            
-            # Create a usable artifact even without VELF
-            echo "📋 Creating fallback artifact..."
-            cp godot.vita.opt.32 vita_release_executable_only
-            echo "⚠️ VELF conversion failed, but executable is ready for manual processing"
-            
-          else
-            echo "❌ No executable found for VELF conversion"
+          if [[ ! -f "temp-build/godot.vita.opt.32" ]]; then
+            echo "❌ ELF not produced. See previous logs!"
+            exit 1
           fi
 
-      - name: Save Godot build cache (Always Runs)
+          cp temp-build/godot.vita.opt.32 temp-build/vita_release_stripped
+          /usr/local/vitasdk/bin/arm-vita-eabi-strip -g temp-build/vita_release_stripped
+          /usr/local/vitasdk/bin/vita-elf-create temp-build/vita_release_stripped temp-build/vita_release.velf || {
+            echo "❌ VELF conversion failed due to invalid relocation."
+            exit 1
+          }
+
+      - name: Save Godot build cache
         uses: ./.github/actions/godot-cache-save
         with:
-          cache-name: vita-template
+          cache-name: PSVita Builds
         continue-on-error: true
 
-      - name: Build Status and Artifact Upload
-        run: |
-          echo "=== Final Build Assessment ==="
-          
-          if [[ -f "temp-build/vita_release.velf" ]]; then
-            echo "🎉 COMPLETE SUCCESS: VELF file created!"
-            echo "📁 File: temp-build/vita_release.velf"
-            ls -la temp-build/vita_release.velf
-            file temp-build/vita_release.velf 2>/dev/null || echo "VELF file details unavailable"
-            echo "BUILD_RESULT=complete" >> $GITHUB_ENV
-            
-          elif [[ -f "temp-build/godot.vita.opt.32" ]]; then
-            echo "⚠️ PARTIAL SUCCESS: Executable created, VELF conversion failed"
-            echo "📁 File: temp-build/godot.vita.opt.32"
-            ls -la temp-build/godot.vita.opt.32
-            echo "💡 This executable can be manually converted to VELF using other tools"
-            echo "BUILD_RESULT=partial" >> $GITHUB_ENV
-            
-          else
-            echo "❌ BUILD FAILED: No executable created"
-            echo "BUILD_RESULT=failed" >> $GITHUB_ENV
-          fi
-
-      - name: Upload Complete Artifact (VELF Success)
-        if: env.BUILD_RESULT == 'complete'
+      - name: Upload artifact
         uses: ./.github/actions/upload-artifact
         with:
-          name: godot-vita-complete-${{ github.sha }}
+          name: godot-vita-release-${{ github.sha }}-stable
           path: |
             temp-build/vita_release.velf
             temp-build/godot.vita.opt.32
             temp-build/vita_release/
 
-      - name: Upload Partial Artifact (Executable Only)
-        if: env.BUILD_RESULT == 'partial'
-        uses: ./.github/actions/upload-artifact
-        with:
-          name: godot-vita-executable-${{ github.sha }}
-          path: |
-            temp-build/godot.vita.opt.32
-            temp-build/vita_*
-            temp-build/
-
       - name: Debug Build Information
         if: always()
         run: |
           echo "=== Build Summary ==="
-          echo "Build Result: $BUILD_RESULT"
-          echo "VitaSDK Version: $VITASDK_VERSION"
-          echo "vita-packages-extra commit: $VITA_PACKAGES_EXTRA_COMMIT"
-          echo "Build Date: $(date)"
-          
-          case "$BUILD_RESULT" in
-            "complete")
-              echo "🎉 PS Vita Godot template build COMPLETED successfully!"
-              echo "✅ Ready for deployment to PS Vita device"
-              ;;
-            "partial") 
-              echo "⚠️ PS Vita executable built, but VELF conversion failed"
-              echo "💡 Manual VELF creation may be possible with external tools"
-              echo "🔧 Next steps: Try manual vita-elf-create with different parameters"
-              ;;
-            "failed")
-              echo "❌ Build failed - cache preserved for next attempt"
-              echo "🔄 Next run will continue from cached state (5-10 minutes)"
-              ;;
-          esac
+          arm-vita-eabi-gcc --version || echo "GCC version unknown"
+          if [[ -f "temp-build/vita_release.velf" ]]; then
+            file temp-build/vita_release.velf
+            du -h temp-build/vita_release.velf
+          else
+            echo "No VELF file produced. Build failure."
