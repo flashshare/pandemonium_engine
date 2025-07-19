@@ -1,7 +1,11 @@
-name: 🎮 PSVita Builds
-on: [push, pull_request]
+name: PSVita Release Build
 
-# Global Settings
+on:
+  push:
+    branches: [main, 3.x]
+  pull_request:
+    branches: [main, 3.x]
+
 env:
   GODOT_BASE_BRANCH: 3.x
   SCONSFLAGS: verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=True
@@ -16,9 +20,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  vita-template:
-    runs-on: "ubuntu-24.04"
-    name: Template (target=release, tools=no)
+  vita-release:
+    runs-on: ubuntu-24.04
+    name: Vita Release Build
 
     steps:
       - name: Checkout repository
@@ -66,105 +70,31 @@ jobs:
           
           echo "✅ VitaSDK setup complete with pinned versions"
 
-      - name: Cache Status Check
-        run: |
-          echo "=== Build Cache Status ==="
-          if [ -d ".scons-cache" ]; then
-            echo "📦 Cache directory exists: $(du -sh .scons-cache 2>/dev/null || echo 'Empty')"
-            echo "🎯 Cached files: $(find .scons-cache -name "*.o" 2>/dev/null | wc -l) object files"
-            echo "⚡ This will be an incremental build"
-          else
-            echo "🆕 No cache directory found - this will be a full build"
-          fi
+      - name: Compilation
+        uses: ./.github/actions/godot-build
+        with:
+          sconsflags: ${{ env.SCONSFLAGS }} -fno-pic -fno-pie
+          platform: vita
+          target: release
+          tools: false
 
-      - name: Compilation (Fail-Safe)
-        id: compilation
+      - name: Vita VELF Conversion
         run: |
-          echo "=== Starting Godot Build (Cache-Safe Mode) ==="
-          
-          # Set up VitaSDK environment
-          export VITASDK=/usr/local/vitasdk
-          export PATH=$VITASDK/bin:$PATH
-          
-          # Initialize build result tracking
-          BUILD_SUCCESS=false
-          BUILD_EXIT_CODE=0
-          
-          # Attempt build and capture result without failing the workflow step
-          echo "🔨 Starting SCons build..."
-          if scons platform=vita \
-                target=release \
-                tools=false \
-                verbose=no \
-                warnings=no \
-                werror=no \
-                debug_symbols=no \
-                use_rtti=True \
-                disable_gles3=True; then
-            BUILD_SUCCESS=true
-            BUILD_EXIT_CODE=0
-            echo "✅ Build completed successfully!"
-          else
-            BUILD_SUCCESS=false
-            BUILD_EXIT_CODE=$?
-            echo "⚠️ Build failed with exit code: $BUILD_EXIT_CODE"
-          fi
-          
-          # Check what was actually built
-          echo "=== Build Artifacts Check ==="
-          if [[ -f "temp-build/vita_release.velf" ]]; then
-            echo "✅ VELF file successfully created"
-            echo "📁 VELF location: temp-build/vita_release.velf"
-            ls -la temp-build/vita_release* 2>/dev/null || true
-          elif [[ -f "temp-build/godot.vita.opt.32" ]]; then
-            echo "📦 Executable created but VELF conversion may have failed"
-            echo "📁 ELF location: temp-build/godot.vita.opt.32"
-            ls -la temp-build/godot.vita.opt.32
-          else
-            echo "⚠️ No final executable found, but compilation may be cached"
-            echo "📂 Available temp-build contents:"
-            ls -la temp-build/ 2>/dev/null || echo "No temp-build directory"
-          fi
-          
-          # Check cache status after build
-          echo "=== Post-Build Cache Status ==="
-          if [ -d ".scons-cache" ]; then
-            echo "📦 Cache size: $(du -sh .scons-cache 2>/dev/null || echo 'Empty')"
-            echo "🎯 Total cached objects: $(find .scons-cache -name "*.o" 2>/dev/null | wc -l)"
-          fi
-          
-          # Save build results for next steps
-          echo "BUILD_SUCCESS=$BUILD_SUCCESS" >> $GITHUB_OUTPUT
-          echo "BUILD_EXIT_CODE=$BUILD_EXIT_CODE" >> $GITHUB_OUTPUT
-          
-          # CRITICAL: Don't exit with failure - let cache save happen
-          echo "🔄 Workflow continues regardless of build result to preserve cache"
-          exit 0
+          set -e
+          cp temp-build/godot.vita.opt.32 temp-build/vita_release_stripped
+          /usr/local/vitasdk/bin/arm-vita-eabi-strip -g temp-build/vita_release_stripped
+          /usr/local/vitasdk/bin/vita-elf-create temp-build/vita_release_stripped temp-build/vita_release.velf || {
+            echo "❌ VELF conversion failed due to invalid relocation. See https://github.com/vitasdk for updates.";
+            exit 1;
+          }
 
-      - name: Save Godot build cache (Always Runs)
+      - name: Save Godot build cache
         uses: ./.github/actions/godot-cache-save
         with:
-          cache-name: ${{ matrix.cache-name }}
+          cache-name: PSVita Builds
         continue-on-error: true
 
-      - name: Build Results Summary
-        run: |
-          echo "=== Final Build Summary ==="
-          echo "Build Success: ${{ steps.compilation.outputs.BUILD_SUCCESS }}"
-          echo "Build Exit Code: ${{ steps.compilation.outputs.BUILD_EXIT_CODE }}"
-          echo "VitaSDK Version: $VITASDK_VERSION"
-          echo "vita-packages-extra commit: $VITA_PACKAGES_EXTRA_COMMIT"
-          
-          if [[ "${{ steps.compilation.outputs.BUILD_SUCCESS }}" == "true" ]]; then
-            echo "🎉 BUILD SUCCESSFUL - Artifacts ready for upload"
-          else
-            echo "💾 BUILD FAILED - But compilation cache preserved for next run"
-            echo "⚡ Next build will start from cached compilation state"
-            echo "🔧 Check build logs above for specific error details"
-          fi
-
-      - name: Upload artifact (Success Only)
-        if: steps.compilation.outputs.BUILD_SUCCESS == 'true'
+      - name: Upload artifact
         uses: ./.github/actions/upload-artifact
         with:
           name: godot-vita-release-${{ github.sha }}-stable
@@ -173,32 +103,13 @@ jobs:
             temp-build/godot.vita.opt.32
             temp-build/vita_release/
 
-      - name: Upload Debug Artifacts (Failure Case)
-        if: steps.compilation.outputs.BUILD_SUCCESS == 'false'
-        uses: ./.github/actions/upload-artifact
-        with:
-          name: godot-vita-debug-${{ github.sha }}-failed-build
-          path: |
-            temp-build/
-            .scons-cache/
-        continue-on-error: true
-
-      - name: Verify Build Success (Final Check)
+      - name: Verify Build Success
         run: |
-          echo "=== Final Verification ==="
-          if [[ "${{ steps.compilation.outputs.BUILD_SUCCESS }}" == "true" ]]; then
-            if [[ -f "temp-build/vita_release.velf" ]]; then
-              echo "✅ VELF file successfully created"
-              file temp-build/vita_release.velf 2>/dev/null || echo "File info unavailable"
-              echo "🎯 Build completed successfully!"
-              exit 0
-            else
-              echo "⚠️ Build reported success but VELF file missing"
-              exit 1
-            fi
+          echo "=== Build Verification ==="
+          if [[ -f "temp-build/vita_release.velf" ]]; then
+            echo "✅ VELF file successfully created"
+            ls -la temp-build/vita_release*
+            file temp-build/vita_release.velf
           else
-            echo "❌ Build failed, but cache preserved for next attempt"
-            echo "💡 Next run will continue from cached compilation state"
-            echo "🔄 To retry: push another commit or re-run this workflow"
-            exit 1
-          fi
+            echo "❌ Build verification failed"
+            ls -la temp-build/ 2>/dev/null || echo "No temp-build directory"
