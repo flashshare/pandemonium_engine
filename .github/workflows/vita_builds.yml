@@ -4,11 +4,11 @@ on: [push, pull_request]
 # Global Settings
 env:
   GODOT_BASE_BRANCH: 3.x
+  SCONSFLAGS: verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=True
   VITASDK: /usr/local/vitasdk
-  # Pin to specific VitaSDK version that worked in March 2025
+  # Pin to working versions from your successful build period
   VITASDK_VERSION: "vitasdk-x86_64-linux-gnu-2025-03-11_15-12-52"
-  # Pin to specific vita-packages-extra commit to avoid recent problematic changes, before using SDL2
-  VITA_PACKAGES_EXTRA_COMMIT: d5b66fa7271abac9689541a59110adc17d06a616
+  VITA_PACKAGES_EXTRA_COMMIT: d96ca70a3afa0eff6009ec7500afc7f3068933c1
   EUID: 1
 
 concurrency:
@@ -21,7 +21,10 @@ jobs:
     name: Template (target=release, tools=no)
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Restore Godot build cache
         uses: ./.github/actions/godot-cache-restore
@@ -30,65 +33,66 @@ jobs:
       - name: Setup python and scons
         uses: ./.github/actions/godot-deps
 
-      - name: Setup VitaSDK with Exact Working Version
+      - name: Setup VitaSDK (Pinned to Working Version)
         run: |
           sudo apt-get update
           sudo apt-get install cmake libarchive-tools fakeroot zip wget -y
           
-          echo "=== Installing Exact VitaSDK Version ==="
-          echo "Version: $VITASDK_VERSION"
-          
-          # Download the exact working VitaSDK version from March 2025
+          # Use the exact VitaSDK version that worked in your May 2025 build
+          echo "Installing VitaSDK version: $VITASDK_VERSION"
           wget -q "https://github.com/vitasdk/autobuilds/releases/download/master-linux-v2.529/${VITASDK_VERSION}.tar.bz2"
-          
-          # Extract to exact location
           sudo tar -xf "${VITASDK_VERSION}.tar.bz2" -C /usr/local/
           
-          # Set environment variables for this session
+          # Set up environment
           export VITASDK=/usr/local/vitasdk
           export PATH=$VITASDK/bin:$PATH
           echo "VITASDK=/usr/local/vitasdk" >> $GITHUB_ENV
           echo "/usr/local/vitasdk/bin" >> $GITHUB_PATH
           
-          # Verify toolchain installation
-          echo "=== VitaSDK Verification ==="
-          arm-vita-eabi-gcc --version | head -1
-          vita-elf-create --version || echo "vita-elf-create available"
-          
-          echo "=== Installing vdpm and vita-rss-libdl ==="
+          # Install dependencies using your original approach but with pinned versions
           git clone https://github.com/vitasdk/vdpm
           cd vdpm
           ./install-all.sh
           vdpm vita-rss-libdl
           cd ..
           
-          echo "=== Installing Pinned vita-packages-extra ==="
+          # Pin vita-packages-extra to your working commit
           git clone https://github.com/isage/vita-packages-extra
           cd vita-packages-extra
           git checkout $VITA_PACKAGES_EXTRA_COMMIT
           cd pvr_psp2
           vita-makepkg
           vdpm *-arm.tar.xz
-          echo "✅ VitaSDK setup complete"
-
-      - name: Compilation with RTTI Enabled and ARM Fixes
-        run: |
-          echo "=== Starting Godot Build with RTTI Enabled ==="
           
-          # Ensure toolchain is in PATH
+          echo "✅ VitaSDK setup complete with pinned versions"
+
+      - name: Cache Status Check
+        run: |
+          echo "=== Build Cache Status ==="
+          if [ -d ".scons-cache" ]; then
+            echo "📦 Cache directory exists: $(du -sh .scons-cache 2>/dev/null || echo 'Empty')"
+            echo "🎯 Cached files: $(find .scons-cache -name "*.o" 2>/dev/null | wc -l) object files"
+            echo "⚡ This will be an incremental build"
+          else
+            echo "🆕 No cache directory found - this will be a full build"
+          fi
+
+      - name: Compilation (Fail-Safe)
+        id: compilation
+        run: |
+          echo "=== Starting Godot Build (Cache-Safe Mode) ==="
+          
+          # Set up VitaSDK environment
           export VITASDK=/usr/local/vitasdk
           export PATH=$VITASDK/bin:$PATH
           
-          # Set ARM cross-compilation environment
-          export CC="arm-vita-eabi-gcc"
-          export CXX="arm-vita-eabi-g++"
-          export AR="arm-vita-eabi-ar"
-          export RANLIB="arm-vita-eabi-ranlib"
-          export STRIP="arm-vita-eabi-strip"
+          # Initialize build result tracking
+          BUILD_SUCCESS=false
+          BUILD_EXIT_CODE=0
           
-          # Build with RTTI enabled and ARM relocation fixes
-          # REMOVED -fno-rtti to allow dynamic_cast in Object::cast_to
-          scons platform=vita \
+          # Attempt build and capture result without failing the workflow step
+          echo "🔨 Starting SCons build..."
+          if scons platform=vita \
                 target=release \
                 tools=false \
                 verbose=no \
@@ -96,51 +100,105 @@ jobs:
                 werror=no \
                 debug_symbols=no \
                 use_rtti=True \
-                disable_gles3=True \
-                CXXFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -Wno-psabi" \
-                CCFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -Wno-psabi" \
-                LINKFLAGS="-Wl,--no-eh-frame-hdr -Wl,--gc-sections -Wl,--strip-all"
-          
-          # Verify build success
-          if [[ -f "temp-build/vita_release.velf" ]]; then
-            echo "✅ Build successful! VELF file created."
-            ls -la temp-build/vita_release*
+                disable_gles3=True; then
+            BUILD_SUCCESS=true
+            BUILD_EXIT_CODE=0
+            echo "✅ Build completed successfully!"
           else
-            echo "❌ Build failed! VELF file not found."
-            find temp-build/ -name "*vita*" -o -name "*.velf" 2>/dev/null || echo "No relevant files found"
-            exit 1
+            BUILD_SUCCESS=false
+            BUILD_EXIT_CODE=$?
+            echo "⚠️ Build failed with exit code: $BUILD_EXIT_CODE"
           fi
+          
+          # Check what was actually built
+          echo "=== Build Artifacts Check ==="
+          if [[ -f "temp-build/vita_release.velf" ]]; then
+            echo "✅ VELF file successfully created"
+            echo "📁 VELF location: temp-build/vita_release.velf"
+            ls -la temp-build/vita_release* 2>/dev/null || true
+          elif [[ -f "temp-build/godot.vita.opt.32" ]]; then
+            echo "📦 Executable created but VELF conversion may have failed"
+            echo "📁 ELF location: temp-build/godot.vita.opt.32"
+            ls -la temp-build/godot.vita.opt.32
+          else
+            echo "⚠️ No final executable found, but compilation may be cached"
+            echo "📂 Available temp-build contents:"
+            ls -la temp-build/ 2>/dev/null || echo "No temp-build directory"
+          fi
+          
+          # Check cache status after build
+          echo "=== Post-Build Cache Status ==="
+          if [ -d ".scons-cache" ]; then
+            echo "📦 Cache size: $(du -sh .scons-cache 2>/dev/null || echo 'Empty')"
+            echo "🎯 Total cached objects: $(find .scons-cache -name "*.o" 2>/dev/null | wc -l)"
+          fi
+          
+          # Save build results for next steps
+          echo "BUILD_SUCCESS=$BUILD_SUCCESS" >> $GITHUB_OUTPUT
+          echo "BUILD_EXIT_CODE=$BUILD_EXIT_CODE" >> $GITHUB_OUTPUT
+          
+          # CRITICAL: Don't exit with failure - let cache save happen
+          echo "🔄 Workflow continues regardless of build result to preserve cache"
+          exit 0
 
-      - name: Save Godot build cache
+      - name: Save Godot build cache (Always Runs)
         uses: ./.github/actions/godot-cache-save
         with:
           cache-name: ${{ matrix.cache-name }}
         continue-on-error: true
 
-      - name: Upload artifact
+      - name: Build Results Summary
+        run: |
+          echo "=== Final Build Summary ==="
+          echo "Build Success: ${{ steps.compilation.outputs.BUILD_SUCCESS }}"
+          echo "Build Exit Code: ${{ steps.compilation.outputs.BUILD_EXIT_CODE }}"
+          echo "VitaSDK Version: $VITASDK_VERSION"
+          echo "vita-packages-extra commit: $VITA_PACKAGES_EXTRA_COMMIT"
+          
+          if [[ "${{ steps.compilation.outputs.BUILD_SUCCESS }}" == "true" ]]; then
+            echo "🎉 BUILD SUCCESSFUL - Artifacts ready for upload"
+          else
+            echo "💾 BUILD FAILED - But compilation cache preserved for next run"
+            echo "⚡ Next build will start from cached compilation state"
+            echo "🔧 Check build logs above for specific error details"
+          fi
+
+      - name: Upload artifact (Success Only)
+        if: steps.compilation.outputs.BUILD_SUCCESS == 'true'
         uses: ./.github/actions/upload-artifact
         with:
-          name: godot-vita-release-${{ github.sha }}-rtti-fixed
+          name: godot-vita-release-${{ github.sha }}-stable
           path: |
             temp-build/vita_release.velf
             temp-build/godot.vita.opt.32
             temp-build/vita_release/
 
-      - name: Debug Build Information
-        if: always()
+      - name: Upload Debug Artifacts (Failure Case)
+        if: steps.compilation.outputs.BUILD_SUCCESS == 'false'
+        uses: ./.github/actions/upload-artifact
+        with:
+          name: godot-vita-debug-${{ github.sha }}-failed-build
+          path: |
+            temp-build/
+            .scons-cache/
+        continue-on-error: true
+
+      - name: Verify Build Success (Final Check)
         run: |
-          echo "=== Build Summary ==="
-          echo "Build completed at: $(date)"
-          echo "VitaSDK version: $VITASDK_VERSION"
-          echo "vita-packages-extra commit: $VITA_PACKAGES_EXTRA_COMMIT"
-          echo "RTTI Status: ENABLED (use_rtti=True)"
-          echo "Compiler version: $(arm-vita-eabi-gcc --version | head -1 2>/dev/null || echo 'Unknown')"
-          
-          if [[ -f "temp-build/vita_release.velf" ]]; then
-            echo "=== VELF File Information ==="
-            file temp-build/vita_release.velf 2>/dev/null || echo "File command failed"
-            du -h temp-build/vita_release.velf 2>/dev/null || echo "Size check failed"
-            echo "Build Status: ✅ SUCCESS"
+          echo "=== Final Verification ==="
+          if [[ "${{ steps.compilation.outputs.BUILD_SUCCESS }}" == "true" ]]; then
+            if [[ -f "temp-build/vita_release.velf" ]]; then
+              echo "✅ VELF file successfully created"
+              file temp-build/vita_release.velf 2>/dev/null || echo "File info unavailable"
+              echo "🎯 Build completed successfully!"
+              exit 0
+            else
+              echo "⚠️ Build reported success but VELF file missing"
+              exit 1
+            fi
           else
-            echo "Build Status: ❌ FAILED"
+            echo "❌ Build failed, but cache preserved for next attempt"
+            echo "💡 Next run will continue from cached compilation state"
+            echo "🔄 To retry: push another commit or re-run this workflow"
+            exit 1
           fi
