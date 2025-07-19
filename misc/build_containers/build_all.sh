@@ -12,7 +12,10 @@ mkdir -p logs
 
 custom_envvars=''
 
-if [[ -z "${OFFICIAL}" ]]; then
+#export OFFICIAL=1;./build_all.sh
+
+if [[ ! -z "${OFFICIAL}" ]]; then
+	echo "OFFICIAL BUILD SET"
   custom_envvars='-e BUILD_NAME=official'
 fi
 
@@ -56,7 +59,7 @@ docker run ${custom_envvars} \
 docker run ${custom_envvars} \
         -v ${basedir}/engine_build_scripts:/root/engine_build_scripts \
         -v ${project_root}:/root/project \
-        -w /root/project pandemonium-ios:${img_version} \
+        -w /root/project pandemonium-appleembedded:${img_version} \
         bash /root/engine_build_scripts/ios.sh "$@" 2>&1 | tee logs/ios.log
 
 
@@ -139,10 +142,13 @@ files=(
   "pandemonium.javascript.opt.threads.zip"
   "pandemonium.javascript.opt.debug.threads.zip"
 
-  "pandemonium.javascript.opt.tools.threads.zip"
-
   "pandemonium.javascript.opt.gdnative.zip"
   "pandemonium.javascript.opt.debug.gdnative.zip"
+
+  "pandemonium.javascript.opt.gdnative.threads.zip"
+  "pandemonium.javascript.opt.debug.gdnative.threads.zip"
+
+  "pandemonium.javascript.opt.tools.threads.zip"
 
   # Android
   "android_source.zip"

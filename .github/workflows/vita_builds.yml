@@ -1,27 +1,27 @@
 name: 🎮 PSVita Builds
-
 on: [push, pull_request]
 
+# Global Settings
 env:
   GODOT_BASE_BRANCH: 3.x
-  SCONSFLAGS: verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=True
   VITASDK: /usr/local/vitasdk
-  EUID: 1 makepkg
+  # Pin to specific VitaSDK version that worked in March 2025
+  VITASDK_VERSION: "vitasdk-x86_64-linux-gnu-2025-03-11_15-12-52"
+  # Pin to specific vita-packages-extra commit to avoid recent problematic changes
+  VITA_PACKAGES_EXTRA_COMMIT: d96ca70a3afa0eff6009ec7500afc7f3068933c1
+  EUID: 1
 
 concurrency:
-  group: ci-${{ github.actor }}-${{ github.head_ref || github.run_number }}-${{ github.ref }}-vita
+  group: ci-${{github.actor}}-${{github.head_ref || github.run_number}}-${{github.ref}}-vita
   cancel-in-progress: true
 
 jobs:
   vita-template:
+    runs-on: "ubuntu-24.04"
     name: Template (target=release, tools=no)
-    runs-on: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 1
 
       - name: Restore Godot build cache
         uses: ./.github/actions/godot-cache-restore
@@ -30,41 +30,130 @@ jobs:
       - name: Setup python and scons
         uses: ./.github/actions/godot-deps
 
-      - name: Setup VitaSDK
+      - name: Setup VitaSDK with Exact Working Version
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake libarchive-tools fakeroot zip git
-          git clone https://github.com/vitasdk/vdpm
-          git clone https://github.com/isage/vita-packages-extra
-          cd vdpm
-          ./bootstrap-vitasdk.sh
-          ./install-all.sh
+          sudo apt-get install cmake libarchive-tools fakeroot zip wget -y
+          
+          echo "=== Installing Exact VitaSDK Version ==="
+          echo "Version: $VITASDK_VERSION"
+          
+          # Download the exact working VitaSDK version from March 2025
+          wget -q "https://github.com/vitasdk/autobuilds/releases/download/master-linux-v2.529/${VITASDK_VERSION}.tar.bz2"
+          
+          # Extract to exact location
+          sudo tar -xf "${VITASDK_VERSION}.tar.bz2" -C /usr/local/
+          
+          # Set environment variables for this session
+          export VITASDK=/usr/local/vitasdk
           export PATH=$VITASDK/bin:$PATH
+          echo "VITASDK=/usr/local/vitasdk" >> $GITHUB_ENV
+          echo "/usr/local/vitasdk/bin" >> $GITHUB_PATH
+          
+          # Verify toolchain installation
+          echo "=== VitaSDK Verification ==="
+          arm-vita-eabi-gcc --version | head -1
+          vita-elf-create --version || echo "vita-elf-create available"
+          ls -la $VITASDK/bin/ | grep -E "(arm-vita-eabi|vita-)" | head -5
+          
+          echo "=== Installing vdpm and vita-rss-libdl ==="
+          git clone https://github.com/vitasdk/vdpm
+          cd vdpm
+          # Use the vdpm but with our fixed VitaSDK
+          ./install-all.sh
           vdpm vita-rss-libdl
-          # Use a specific commit of vita-packages-extra for stability
-          cd ../vita-packages-extra
-          git checkout 199143b938dca96ceb68a01ad7149fca11998ae4
+          cd ..
+          
+          echo "=== Installing Pinned vita-packages-extra ==="
+          echo "Using vita-packages-extra commit: $VITA_PACKAGES_EXTRA_COMMIT"
+          git clone https://github.com/isage/vita-packages-extra
+          cd vita-packages-extra
+          git checkout $VITA_PACKAGES_EXTRA_COMMIT
+          echo "Checked out commit: $(git rev-parse HEAD)"
           cd pvr_psp2
           vita-makepkg
           vdpm *-arm.tar.xz
+          echo "✅ VitaSDK setup complete with pinned dependencies"
 
-      - name: Compilation
-        uses: ./.github/actions/godot-build
-        with:
-          sconsflags: ${{ env.SCONSFLAGS }}
-          platform: vita
-          target: release
-          tools: false
+      - name: Compilation with ARM Relocation Type 25 Fix
+        run: |
+          echo "=== Starting Godot Build with Relocation Fixes ==="
+          
+          # Ensure toolchain is in PATH
+          export VITASDK=/usr/local/vitasdk
+          export PATH=$VITASDK/bin:$PATH
+          
+          # Set ARM cross-compilation environment
+          export CC="arm-vita-eabi-gcc"
+          export CXX="arm-vita-eabi-g++"
+          export AR="arm-vita-eabi-ar"
+          export RANLIB="arm-vita-eabi-ranlib"
+          export STRIP="arm-vita-eabi-strip"
+          
+          # Build with ARM relocation type 25 fixes
+          # These flags prevent generation of problematic ARM.exidx sections and relocations
+          scons platform=vita \
+                target=release \
+                tools=false \
+                verbose=no \
+                warnings=no \
+                werror=no \
+                debug_symbols=no \
+                use_rtti=True \
+                disable_gles3=True \
+                CXXFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-rtti -Wno-psabi" \
+                CCFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -Wno-psabi" \
+                LINKFLAGS="-Wl,--no-eh-frame-hdr -Wl,--gc-sections -Wl,--strip-all"
+          
+          # Verify build success
+          if [[ -f "temp-build/vita_release.velf" ]]; then
+            echo "✅ Build successful! VELF file created."
+            ls -la temp-build/vita_release*
+          else
+            echo "❌ Build failed! VELF file not found."
+            echo "=== Debug Information ==="
+            find temp-build/ -name "*vita*" -o -name "*.velf" 2>/dev/null || echo "No relevant files found"
+            exit 1
+          fi
 
       - name: Save Godot build cache
         uses: ./.github/actions/godot-cache-save
         with:
-          cache-name: ${{ github.job }}-vita
+          cache-name: ${{ matrix.cache-name }}
         continue-on-error: true
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: ./.github/actions/upload-artifact
         with:
-          name: godot-vita-release
-          path: temp-build/vita_release.velf
-          overwrite: true
+          name: godot-vita-release-${{ github.sha }}-fixed-relocation
+          path: |
+            temp-build/vita_release.velf
+            temp-build/godot.vita.opt.32
+            temp-build/vita_release/
+
+      # Enhanced debug information
+      - name: Debug Build Information
+        if: always()
+        run: |
+          echo "=== Build Summary ==="
+          echo "Build completed at: $(date)"
+          echo "VitaSDK version: $VITASDK_VERSION"
+          echo "vita-packages-extra commit: $VITA_PACKAGES_EXTRA_COMMIT"
+          echo "Compiler version: $(arm-vita-eabi-gcc --version | head -1 2>/dev/null || echo 'Unknown')"
+          echo "vita-elf-create available: $(which vita-elf-create 2>/dev/null || echo 'Not found')"
+          
+          echo "=== Build Artifacts ==="
+          find temp-build/ -type f 2>/dev/null | head -10 || echo "No temp-build directory"
+          
+          if [[ -f "temp-build/vita_release.velf" ]]; then
+            echo "=== VELF File Information ==="
+            file temp-build/vita_release.velf 2>/dev/null || echo "File command failed"
+            du -h temp-build/vita_release.velf 2>/dev/null || echo "Size check failed"
+            echo "Build Status: ✅ SUCCESS"
+          else
+            echo "Build Status: ❌ FAILED"
+          fi
+          
+          echo "=== Environment Variables ==="
+          echo "VITASDK: $VITASDK"
+          echo "PATH includes VitaSDK: $(echo $PATH | grep -o "/usr/local/vitasdk/bin" || echo "Not found")"
