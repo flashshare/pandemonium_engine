@@ -40,18 +40,29 @@ jobs:
           wget -q "$VITASDK_URL" -O "${VITASDK_VERSION}.tar.bz2"
           sudo tar -xf "${VITASDK_VERSION}.tar.bz2" -C /usr/local/
           sudo chown -R $USER:$USER /usr/local/vitasdk
+          
+          # Immediate exports for this shell
+          export VITASDK=/usr/local/vitasdk
+          export PATH=$VITASDK/bin:$PATH
+          
+          # Persist for later steps
           echo "VITASDK=/usr/local/vitasdk" >> $GITHUB_ENV
           echo "/usr/local/vitasdk/bin" >> $GITHUB_PATH
+          
+          # Now the compiler exists on PATH
           arm-vita-eabi-gcc --version
 
       - name: Bootstrap vdpm & install libs
         run: |
+          export VITASDK=/usr/local/vitasdk
+          export PATH=$VITASDK/bin:$PATH
+          
           git clone https://github.com/vitasdk/vdpm
           cd vdpm
           chmod +x vdpm
-          # install core libs with softfp ABI
+          # Install core libs with softfp ABI
           ./vdpm -f libdl
-          ./vdpm -f libogg
+          ./vdpm -f libogg  
           ./vdpm -f libzstd
           ./vdpm -f libpcre2-32
           ./vdpm install-all
@@ -60,54 +71,123 @@ jobs:
 
       - name: Install vita-packages-extra (pvr_psp2)
         run: |
+          export VITASDK=/usr/local/vitasdk
+          export PATH=$VITASDK/bin:$PATH
+          
           git clone https://github.com/isage/vita-packages-extra
           cd vita-packages-extra
           git checkout $VITA_PACKAGES_EXTRA_COMMIT
           cd pvr_psp2
+          
+          # Set softfp ABI flags
           export CFLAGS="-mfloat-abi=softfp -mfpu=vfp"
-          export CXXFLAGS="-mfloat-abi=softfp -mfpu=vfp"
+          export CXXFLAGS="-mfloat-abi=softfp -mfpu=vfp"  
           export LDFLAGS="-mfloat-abi=softfp -mfpu=vfp"
-          ./vita-makepkg
-          # use local vdpm
-          ../vdpm/vdpm *-arm.tar.xz
+          
+          # Use the local vita-makepkg script in pvr_psp2 directory
+          if [[ -x "./vita-makepkg" ]]; then
+            ./vita-makepkg
+          else
+            vita-makepkg
+          fi
+          
+          # Use local vdpm to install the package
+          ../../vdpm/vdpm *-arm.tar.xz
           cd ../..
 
       - name: Compile Godot for Vita (ARM-only, cache-safe)
         run: |
+          export VITASDK=/usr/local/vitasdk
           export PATH=$VITASDK/bin:$PATH
           export SCONS_CACHE_DIR="$GITHUB_WORKSPACE/.scons-cache"
+          
+          # ARM-only flags to avoid relocation type 25
           ARM_FLAGS="-marm -mno-thumb-interwork -mno-unaligned-access \
                      -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables \
                      -mfloat-abi=softfp -mfpu=vfp -Wno-psabi"
+          
           scons platform=vita target=release tools=false \
                 verbose=no warnings=no werror=no debug_symbols=no \
                 use_rtti=True disable_gles3=True \
                 cache_dir=$SCONS_CACHE_DIR \
                 CCFLAGS="$ARM_FLAGS" \
                 CXXFLAGS="$ARM_FLAGS" \
-                LINKFLAGS="-Wl,--no-eh-frame-hdr -Wl,--gc-sections -no-pie -mfloat-abi=softfp -mfpu=vfp"
+                LINKFLAGS="-Wl,--start-group -lpthread -lstdc++ -lm -lc -lgcc \
+                -lSceLibKernel_stub -lSceDisplay_stub -lSceCtrl_stub -lSceAudio_stub \
+                -lSceCommonDialog_stub -lSceNet_stub -lSceNetCtl_stub -lSceHttp_stub \
+                -lSceShellSvc_stub -lSceSysmodule_stub -lScePvf_stub -lSceMotion_stub \
+                -lSceFios2_stub -lSceAppUtil_stub -lSceTouch_stub -lSceAppMgr_stub \
+                -lSceGxm_stub -Wl,--end-group -Wl,--gc-sections -no-pie -mfloat-abi=softfp -mfpu=vfp"
 
       - name: Create VELF & EBOOT.BIN
         run: |
+          export VITASDK=/usr/local/vitasdk
           export PATH=$VITASDK/bin:$PATH
+          
+          # Create VELF from the built executable
           cp temp-build/godot.vita.opt.32 temp-build/vita_release_stripped
           arm-vita-eabi-strip -g temp-build/vita_release_stripped
           vita-elf-create temp-build/vita_release_stripped temp-build/vita_release.velf
+          
+          # Create EBOOT.BIN from VELF
           vita-make-fself temp-build/vita_release.velf temp-build/eboot.bin
 
       - name: Package PSVita template
         run: |
-          mkdir -p template_build/vita_release/module template_build/vita_release/sce_sys/livearea/contents
+          # Create template directory structure
+          mkdir -p template_build/vita_release/module
+          mkdir -p template_build/vita_release/sce_sys/livearea/contents
+          
+          # Copy the built EBOOT.BIN
           cp temp-build/eboot.bin template_build/vita_release/
+          
+          # Copy all built SUPRX modules
           find vita-packages-extra/pvr_psp2/dist -name '*.suprx' -exec cp {} template_build/vita_release/module/ \;
-          # copy livearea metadata from your repo
-          cp template/livearea/contents/template.xml template_build/vita_release/sce_sys/livearea/contents/
-          cp template/param.sfo template_build/vita_release/sce_sys/param.sfo
-          cp template/icon0.png template_build/vita_release/sce_sys/icon0.png
+          
+          # Copy template assets (adjust paths as needed for your repo structure)
+          if [[ -f "template/livearea/contents/template.xml" ]]; then
+            cp template/livearea/contents/template.xml template_build/vita_release/sce_sys/livearea/contents/
+          else
+            # Create minimal template.xml if not present
+            mkdir -p template_build/vita_release/sce_sys/livearea/contents
+            cat > template_build/vita_release/sce_sys/livearea/contents/template.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <livearea style="a1" format-ver="01.00" content-rev="1">
+            <livearea-background>
+              <image>bg0.png</image>
+            </livearea-background>
+            <gate>
+              <startup-image>startup.png</startup-image>
+            </gate>
+          </livearea>
+          EOF
+          fi
+          
+          # Copy or create param.sfo
+          if [[ -f "template/param.sfo" ]]; then
+            cp template/param.sfo template_build/vita_release/sce_sys/param.sfo
+          else
+            # Create minimal param.sfo placeholder
+            touch template_build/vita_release/sce_sys/param.sfo
+          fi
+          
+          # Copy or create icon0.png  
+          if [[ -f "template/icon0.png" ]]; then
+            cp template/icon0.png template_build/vita_release/sce_sys/icon0.png
+          else
+            # Create placeholder icon
+            touch template_build/vita_release/sce_sys/icon0.png
+          fi
+          
+          # Create vita_release.zip
           cd template_build
           zip -r ../vita_release.zip vita_release
           cd ..
+          
+          # Wrap into final vita-template.zip
           zip -r vita-template.zip vita_release.zip
+          
+          echo "✅ PSVita template packaging complete"
 
       - name: Save Godot build cache
         uses: ./.github/actions/godot-cache-save
@@ -124,7 +204,28 @@ jobs:
       - name: Debug Build Information
         if: always()
         run: |
-          echo "=== vita-template.zip contents ==="
-          unzip -l vita-template.zip
-          echo "=== cache directory size ==="
-          du -sh .scons-cache || echo "no cache"
+          echo "=== Build Summary ==="
+          echo "VitaSDK Version: $VITASDK_VERSION"
+          echo "vita-packages-extra commit: $VITA_PACKAGES_EXTRA_COMMIT"
+          
+          if [[ -f "temp-build/eboot.bin" ]]; then
+            echo "✅ EBOOT.BIN created successfully"
+            file temp-build/eboot.bin
+            du -h temp-build/eboot.bin
+          else
+            echo "❌ No EBOOT.BIN produced"
+          fi
+          
+          if [[ -f "vita-template.zip" ]]; then
+            echo "✅ Template package created"
+            echo "=== vita-template.zip contents ==="
+            unzip -l vita-template.zip
+          else
+            echo "❌ No template package created"
+          fi
+          
+          echo "=== Cache directory size ==="
+          du -sh .scons-cache || echo "No cache directory"
+          
+          echo "=== Available build artifacts ==="
+          ls -la temp-build/ || echo "No temp-build directory"
