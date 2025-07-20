@@ -40,7 +40,8 @@ jobs:
           cd vdpm
           ./bootstrap-vitasdk.sh
           ./install-all.sh
-          vdpm vita-rss-libdl
+          ./vdpm vita-rss-libdl
+          cd ..
 
       - name: Install vita-packages-extra (pvr_psp2)
         run: |
@@ -83,9 +84,7 @@ jobs:
         run: |
           mkdir -p template_build/vita_release/module template_build/vita_release/sce_sys/livearea/contents
           cp temp-build/eboot.bin template_build/vita_release/
-          # copy built modules
           find vita-packages-extra/pvr_psp2/dist -name '*.suprx' -exec cp {} template_build/vita_release/module/ \;
-          # copy livearea template assets
           cp template/livearea/contents/template.xml template_build/vita_release/sce_sys/livearea/contents/
           cp template/param.sfo template_build/vita_release/sce_sys/param.sfo
           cp template/icon0.png template_build/vita_release/sce_sys/icon0.png
@@ -109,7 +108,7 @@ jobs:
       - name: Debug Build Info
         if: always()
         run: |
-          echo "Archive contents:"
+          echo "Contents of vita-template.zip:"
           unzip -l vita-template.zip
           echo "Cache size:"
-          du -sh .scons-cache
+          du -sh .scons-cache || echo "No cache directory"
