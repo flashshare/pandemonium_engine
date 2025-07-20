@@ -11,7 +11,7 @@ jobs:
   vita-template:
     runs-on: ubuntu-24.04
     concurrency:
-      group: ci-${{ github.actor }}-${{ github.ref }}-vita
+      group: ci-${{github.actor}}-${{github.ref}}-vita
       cancel-in-progress: true
 
     steps:
@@ -20,7 +20,7 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Restore SCons cache
+      - name: Restore Godot build cache
         uses: ./.github/actions/godot-cache-restore
         with:
           cache-name: vita-template
@@ -34,22 +34,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake libarchive-tools fakeroot zip wget libelf-dev build-essential
 
-      - name: Bootstrap VitaSDK (vdpm)
+      - name: Bootstrap VitaSDK via vdpm
         run: |
           git clone https://github.com/vitasdk/vdpm
           cd vdpm
           ./bootstrap-vitasdk.sh
           ./install-all.sh
           ./vdpm vita-rss-libdl
-          cd ..
+        env:
+          VITASDK: ${{env.VITASDK}}
 
-      - name: Install vita-packages-extra (pvr_psp2)
+      - name: Install pvr_psp2 from vita-packages-extra
         run: |
           git clone https://github.com/isage/vita-packages-extra
           cd vita-packages-extra
           git checkout $VITA_PACKAGES_EXTRA_COMMIT
           cd pvr_psp2
-          vita-makepkg
+          # Run the local vita-makepkg script
+          ../vdpm/vdpm vita-rss-libdl >/dev/null 2>&1 || true
+          ./vita-makepkg
           vdpm *-arm.tar.xz
 
       - name: Compile Godot for Vita (ARM-only, cache-safe)
@@ -80,20 +83,25 @@ jobs:
           vita-elf-create temp-build/vita_release_stripped temp-build/vita_release.velf
           vita-make-fself temp-build/vita_release.velf temp-build/eboot.bin
 
-      - name: Package Vita Template
+      - name: Package PSVita template
         run: |
           mkdir -p template_build/vita_release/module template_build/vita_release/sce_sys/livearea/contents
+          # Copy the generated EBOOT.BIN
           cp temp-build/eboot.bin template_build/vita_release/
+          # Copy all built SPRX modules
           find vita-packages-extra/pvr_psp2/dist -name '*.suprx' -exec cp {} template_build/vita_release/module/ \;
+          # Copy livearea metadata from your repo (adjust paths as needed)
           cp template/livearea/contents/template.xml template_build/vita_release/sce_sys/livearea/contents/
           cp template/param.sfo template_build/vita_release/sce_sys/param.sfo
           cp template/icon0.png template_build/vita_release/sce_sys/icon0.png
+          # Zip vita_release into vita_release.zip
           cd template_build
           zip -r ../vita_release.zip vita_release
           cd ..
+          # Wrap vivo_release.zip into vita-template.zip
           zip -r vita-template.zip vita_release.zip
 
-      - name: Save SCons cache
+      - name: Save Godot build cache
         uses: ./.github/actions/godot-cache-save
         with:
           cache-name: vita-template
@@ -108,7 +116,7 @@ jobs:
       - name: Debug Build Info
         if: always()
         run: |
-          echo "Contents of vita-template.zip:"
+          echo "=== Final archive contents ==="
           unzip -l vita-template.zip
-          echo "Cache size:"
-          du -sh .scons-cache || echo "No cache directory"
+          echo "=== Cache size ==="
+          du -sh .scons-cache || echo "no cache"
