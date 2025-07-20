@@ -49,10 +49,10 @@ jobs:
           echo "VITASDK=/usr/local/vitasdk" >> $GITHUB_ENV
           echo "/usr/local/vitasdk/bin" >> $GITHUB_PATH
           
-          # Now the compiler exists on PATH
+          # Verify compiler is working
           arm-vita-eabi-gcc --version
 
-      - name: Bootstrap vdpm & install libs
+      - name: Bootstrap vdpm & install all required libraries
         run: |
           export VITASDK=/usr/local/vitasdk
           export PATH=$VITASDK/bin:$PATH
@@ -60,13 +60,33 @@ jobs:
           git clone https://github.com/vitasdk/vdpm
           cd vdpm
           chmod +x vdpm
-          # Install core libs with softfp ABI
+          
+          # Install core libraries with proper dependency order
           ./vdpm -f libdl
           ./vdpm -f libogg  
           ./vdpm -f libzstd
           ./vdpm -f libpcre2-32
+          
+          # CRITICAL: Install taihen and related libraries
+          ./vdpm -f taihen
+          ./vdpm -f libk
+          ./vdpm -f kubridge
+          
+          # Install all standard packages
           ./vdpm install-all
+          
+          # Install vita-rss-libdl
           ./vdpm vita-rss-libdl
+          
+          # Verify taihen headers are installed
+          if [[ -f "$VITASDK/arm-vita-eabi/include/taihen.h" ]]; then
+            echo "✅ taihen.h found at $VITASDK/arm-vita-eabi/include/taihen.h"
+          else
+            echo "❌ taihen.h not found - installation may have failed"
+            find $VITASDK -name "taihen.h" || echo "No taihen.h found anywhere in VitaSDK"
+            exit 1
+          fi
+          
           cd ..
 
       - name: Install vita-packages-extra (pvr_psp2)
@@ -95,6 +115,19 @@ jobs:
           ../../vdpm/vdpm *-arm.tar.xz
           cd ../..
 
+      - name: Verify VitaSDK Installation
+        run: |
+          export VITASDK=/usr/local/vitasdk
+          export PATH=$VITASDK/bin:$PATH
+          
+          echo "=== VitaSDK Installation Verification ==="
+          echo "VitaSDK path: $VITASDK"
+          echo "Compiler: $(arm-vita-eabi-gcc --version | head -1)"
+          echo "Include directories:"
+          find $VITASDK/arm-vita-eabi/include -name "taihen.h" -o -name "vitasdk.h" | head -5
+          echo "Library directories:"
+          find $VITASDK/arm-vita-eabi/lib -name "libtaihen*" | head -3
+
       - name: Compile Godot for Vita (ARM-only, cache-safe)
         run: |
           export VITASDK=/usr/local/vitasdk
@@ -106,13 +139,16 @@ jobs:
                      -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables \
                      -mfloat-abi=softfp -mfpu=vfp -Wno-psabi"
           
+          # Add explicit include paths to ensure headers are found
+          INCLUDE_FLAGS="-I$VITASDK/arm-vita-eabi/include -I$VITASDK/include"
+          
           scons platform=vita target=release tools=false \
-                verbose=no warnings=no werror=no debug_symbols=no \
+                verbose=yes warnings=no werror=no debug_symbols=no \
                 use_rtti=True disable_gles3=True \
                 cache_dir=$SCONS_CACHE_DIR \
-                CCFLAGS="$ARM_FLAGS" \
-                CXXFLAGS="$ARM_FLAGS" \
-                LINKFLAGS="-Wl,--start-group -lpthread -lstdc++ -lm -lc -lgcc \
+                CCFLAGS="$ARM_FLAGS $INCLUDE_FLAGS" \
+                CXXFLAGS="$ARM_FLAGS $INCLUDE_FLAGS" \
+                LINKFLAGS="-Wl,--start-group -lpthread -lstdc++ -lm -lc -lgcc -ltaihen_stub \
                 -lSceLibKernel_stub -lSceDisplay_stub -lSceCtrl_stub -lSceAudio_stub \
                 -lSceCommonDialog_stub -lSceNet_stub -lSceNetCtl_stub -lSceHttp_stub \
                 -lSceShellSvc_stub -lSceSysmodule_stub -lScePvf_stub -lSceMotion_stub \
@@ -227,5 +263,5 @@ jobs:
           echo "=== Cache directory size ==="
           du -sh .scons-cache || echo "No cache directory"
           
-          echo "=== Available build artifacts ==="
-          ls -la temp-build/ || echo "No temp-build directory"
+          echo "=== Taihen installation check ==="
+          find $VITASDK -name "taihen.h" -o -name "libtaihen*" 2>/dev/null | head -5
