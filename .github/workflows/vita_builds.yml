@@ -11,7 +11,7 @@ jobs:
   vita-template:
     runs-on: ubuntu-24.04
     concurrency:
-      group: ci-${{github.actor}}-${{github.ref}}-vita
+      group: ci-${{ github.actor }}-${{ github.ref }}-vita
       cancel-in-progress: true
 
     steps:
@@ -20,13 +20,13 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Restore Godot build cache
+      - name: Restore SCons cache
         uses: ./.github/actions/godot-cache-restore
         with:
           cache-name: vita-template
         continue-on-error: true
 
-      - name: Setup python & scons
+      - name: Setup Python & SCons
         uses: ./.github/actions/godot-deps
 
       - name: Install build dependencies
@@ -34,18 +34,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake libarchive-tools fakeroot zip wget libelf-dev build-essential
 
-      - name: Bootstrap VitaSDK if missing
+      - name: Bootstrap VitaSDK (vdpm)
         run: |
-          if [ ! -d "$VITASDK" ]; then
-            git clone https://github.com/vitasdk/vdpm
-            cd vdpm
-            ./bootstrap-vitasdk.sh
-            ./install-all.sh
-            vdpm vita-rss-libdl
-          else
-            echo "VITASDK already present; skipping"
-          fi
-          echo "/usr/local/vitasdk/bin" >> $GITHUB_PATH
+          git clone https://github.com/vitasdk/vdpm
+          cd vdpm
+          ./bootstrap-vitasdk.sh
+          ./install-all.sh
+          vdpm vita-rss-libdl
 
       - name: Install vita-packages-extra (pvr_psp2)
         run: |
@@ -88,11 +83,10 @@ jobs:
         run: |
           mkdir -p template_build/vita_release/module template_build/vita_release/sce_sys/livearea/contents
           cp temp-build/eboot.bin template_build/vita_release/
-          # Copy built plugins
+          # copy built modules
           find vita-packages-extra/pvr_psp2/dist -name '*.suprx' -exec cp {} template_build/vita_release/module/ \;
-          # Copy livearea template
+          # copy livearea template assets
           cp template/livearea/contents/template.xml template_build/vita_release/sce_sys/livearea/contents/
-          # Copy or generate param.sfo & icon0.png
           cp template/param.sfo template_build/vita_release/sce_sys/param.sfo
           cp template/icon0.png template_build/vita_release/sce_sys/icon0.png
           cd template_build
@@ -100,7 +94,7 @@ jobs:
           cd ..
           zip -r vita-template.zip vita_release.zip
 
-      - name: Save Godot build cache
+      - name: Save SCons cache
         uses: ./.github/actions/godot-cache-save
         with:
           cache-name: vita-template
@@ -112,10 +106,10 @@ jobs:
           name: vita-template-${{ github.sha }}
           path: vita-template.zip
 
-      - name: Debug Build Information
+      - name: Debug Build Info
         if: always()
         run: |
-          echo "Contents of vita_release.zip:"
-          unzip -l vita_release.zip || true
+          echo "Archive contents:"
+          unzip -l vita-template.zip
           echo "Cache size:"
-          du -sh .scons-cache || echo "No cache"
+          du -sh .scons-cache
