@@ -4,7 +4,7 @@ on: [push, pull_request]
 env:
   GODOT_BASE_BRANCH: 3.x
   VITASDK: /usr/local/vitasdk
-  # Use the old, stable VitaSDK autobuild from August 2022 (GCC 10.x, softfp)
+  # Use the stable VitaSDK autobuild from August 2022 (GCC 10.x, softfp)
   VITASDK_VERSION: "vitasdk-x86_64-linux-gnu-2022-08-14_14-50-39"
   VITASDK_URL: "https://github.com/vitasdk/buildscripts/releases/download/softfp-linux-v2.228/vitasdk-x86_64-linux-gnu-2022-08-14_14-50-39.tar.bz2"
   # Pin to a known-good vita-packages-extra commit
@@ -47,22 +47,34 @@ jobs:
           echo "/usr/local/vitasdk/bin" >> $GITHUB_PATH
           echo "=== GCC Version ==="
           arm-vita-eabi-gcc --version
-          echo "=== Installing vdpm and vita-rss-libdl ==="
+
+      - name: Setup vdpm and vita-packages-extra libraries (force ABI match)
+        run: |
+          export VITASDK=/usr/local/vitasdk
+          export PATH=$VITASDK/bin:$PATH
           git clone https://github.com/vitasdk/vdpm
           cd vdpm
-          ./install-all.sh
+          # Force rebuild key libraries to ensure ABI compatibility
+          vdpm -f libdl
+          vdpm -f libogg
+          vdpm -f libzstd
+          vdpm -f libpcre2-32
+          vdpm install-all
           vdpm vita-rss-libdl
           cd ..
-          echo "=== Installing Pinned vita-packages-extra ==="
           git clone https://github.com/isage/vita-packages-extra
           cd vita-packages-extra
           git checkout $VITA_PACKAGES_EXTRA_COMMIT
           cd pvr_psp2
+          # Always pass the ABI flags to guarantee all static libraries match
+          export CFLAGS="-mfloat-abi=softfp -mfpu=vfp"
+          export CXXFLAGS="-mfloat-abi=softfp -mfpu=vfp"
+          export LDFLAGS="-mfloat-abi=softfp -mfpu=vfp"
           vita-makepkg
           vdpm *-arm.tar.xz
-          echo "✅ VitaSDK setup complete"
+          echo "✅ VitaSDK and libraries setup complete"
 
-      - name: Compilation with RTTI and Relocation Fixes
+      - name: Compilation with RTTI, Relocation, and ABI Fixes
         run: |
           export VITASDK=/usr/local/vitasdk
           export PATH=$VITASDK/bin:$PATH
@@ -71,8 +83,7 @@ jobs:
           export AR="arm-vita-eabi-ar"
           export RANLIB="arm-vita-eabi-ranlib"
           export STRIP="arm-vita-eabi-strip"
-          
-          # Build with RTTI, non-PIC, non-PIE, and no exceptions/unwind
+          # Build with RTTI, softfp ABI, VFP, non-PIC, non-PIE, and no exceptions/unwind
           scons platform=vita \
                 target=release \
                 tools=false \
@@ -82,21 +93,20 @@ jobs:
                 debug_symbols=no \
                 use_rtti=True \
                 disable_gles3=True \
-                CXXFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-pic -fno-pie -Wno-psabi" \
-                CCFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-pic -fno-pie -Wno-psabi" \
-                LINKFLAGS="-Wl,--no-eh-frame-hdr -Wl,--gc-sections -Wl,--strip-all -no-pie"
-
+                CXXFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-pic -fno-pie -Wno-psabi -mfloat-abi=softfp -mfpu=vfp" \
+                CCFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-pic -fno-pie -Wno-psabi -mfloat-abi=softfp -mfpu=vfp" \
+                LINKFLAGS="-Wl,--no-eh-frame-hdr -Wl,--gc-sections -Wl,--strip-all -no-pie -mfloat-abi=softfp -mfpu=vfp"
           if [[ ! -f "temp-build/godot.vita.opt.32" ]]; then
             echo "❌ ELF not produced. See previous logs!"
             exit 1
           fi
-
           cp temp-build/godot.vita.opt.32 temp-build/vita_release_stripped
-          /usr/local/vitasdk/bin/arm-vita-eabi-strip -g temp-build/vita_release_stripped
-          /usr/local/vitasdk/bin/vita-elf-create temp-build/vita_release_stripped temp-build/vita_release.velf || {
+          $VITASDK/bin/arm-vita-eabi-strip -g temp-build/vita_release_stripped
+          $VITASDK/bin/vita-elf-create temp-build/vita_release_stripped temp-build/vita_release.velf || {
             echo "❌ VELF conversion failed due to invalid relocation."
             exit 1
           }
+          echo "✅ Build and VELF conversion complete"
 
       - name: Save Godot build cache
         uses: ./.github/actions/godot-cache-save
