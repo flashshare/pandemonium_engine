@@ -1,4 +1,4 @@
-name: 🎮 PSVita Builds
+name: 🎮 PSVita Template Build
 on: [push, pull_request]
 
 env:
@@ -23,7 +23,7 @@ jobs:
       - name: Restore Godot build cache
         uses: ./.github/actions/godot-cache-restore
         with:
-          cache-name: vita-template  # Explicit name prevents mismatch
+          cache-name: vita-template
         continue-on-error: true
 
       - name: Setup python and scons
@@ -39,10 +39,14 @@ jobs:
           echo "=== Installing VitaSDK Version: $VITASDK_VERSION ==="
           wget -q "https://github.com/vitasdk/autobuilds/releases/download/master-linux-v2.529/${VITASDK_VERSION}.tar.bz2"
           sudo tar -xf "${VITASDK_VERSION}.tar.bz2" -C /usr/local/
+          
           export VITASDK=/usr/local/vitasdk
           export PATH=$VITASDK/bin:$PATH
           echo "VITASDK=/usr/local/vitasdk" >> $GITHUB_ENV
           echo "/usr/local/vitasdk/bin" >> $GITHUB_PATH
+          
+          echo "=== GCC Version ==="
+          arm-vita-eabi-gcc --version
           
           echo "=== Installing vdpm and vita-rss-libdl ==="
           git clone https://github.com/vitasdk/vdpm
@@ -57,7 +61,8 @@ jobs:
           git checkout $VITA_PACKAGES_EXTRA_COMMIT
           cd pvr_psp2
           vita-makepkg
-          vdpm *-arm.tar.xz
+          ../../vdpm/vdpm *-arm.tar.xz
+          cd ../../../
           echo "✅ VitaSDK setup complete"
 
       - name: Compilation with Fixed VitaSDK Library Order
@@ -77,6 +82,7 @@ jobs:
           
           echo "🔨 Starting SCons build with VitaSDK library fixes..."
           
+          # Build with proper VitaSDK library linking order and pthread support
           if scons platform=vita \
                 target=release \
                 tools=false \
@@ -109,94 +115,92 @@ jobs:
             ls -la temp-build/ 2>/dev/null || echo "No temp-build directory"
           fi
           
+          # Save build results
           echo "BUILD_SUCCESS=$BUILD_SUCCESS" >> $GITHUB_OUTPUT
           echo "BUILD_EXIT_CODE=$BUILD_EXIT_CODE" >> $GITHUB_OUTPUT
           
           # Always exit 0 to preserve cache
           exit 0
 
-      - name: VELF Creation
+      - name: VELF & EBOOT.BIN Creation and Template Packaging
         run: |
-          echo "=== VELF Creation Process ==="
+          set -e
           export VITASDK=/usr/local/vitasdk
           export PATH=$VITASDK/bin:$PATH
-          
+
           if [[ -f "temp-build/godot.vita.opt.32" ]]; then
-            echo "✅ Executable found: $(du -h temp-build/godot.vita.opt.32 | cut -f1)"
-            cd temp-build
-            
-            # Standard VELF creation
-            if cp godot.vita.opt.32 vita_release_stripped && \
-               arm-vita-eabi-strip -g vita_release_stripped && \
-               vita-elf-create vita_release_stripped vita_release.velf; then
-              echo "✅ SUCCESS: VELF created successfully!"
-              ls -la vita_release.velf
+            echo "✅ Executable found: temp-build/godot.vita.opt.32"
+
+            # VELF creation
+            cp temp-build/godot.vita.opt.32 temp-build/vita_release_stripped
+            arm-vita-eabi-strip -g temp-build/vita_release_stripped
+            vita-elf-create temp-build/vita_release_stripped temp-build/vita_release.velf
+
+            # EBOOT.BIN creation
+            vita-make-fself temp-build/vita_release.velf temp-build/eboot.bin
+
+            # Prepare PSVita template structure
+            mkdir -p template_build/vita_release/sce_sys
+            mkdir -p template_build/vita_release/module
+
+            # Copy EBOOT.BIN
+            cp temp-build/eboot.bin template_build/vita_release/
+
+            # Copy/Generate param.sfo and icon0.png
+            # Replace with real sources or generate as needed
+            # For demonstration, touch empty files if not present
+            if [[ -f "assets/param.sfo" ]]; then
+              cp assets/param.sfo template_build/vita_release/sce_sys/param.sfo
             else
-              echo "❌ VELF creation failed"
-              ls -la vita_* godot.vita.opt.32 2>/dev/null
+              echo "WARNING: param.sfo missing, generating dummy."
+              echo "SFO" > template_build/vita_release/sce_sys/param.sfo
             fi
+            if [[ -f "assets/icon0.png" ]]; then
+              cp assets/icon0.png template_build/vita_release/sce_sys/icon0.png
+            else
+              echo "WARNING: icon0.png missing, generating dummy."
+              touch template_build/vita_release/sce_sys/icon0.png
+            fi
+
+            # Copy all required suprx modules from vita-packages-extra/pvr_psp2/dist
+            find vita-packages-extra/pvr_psp2/dist -type f -name "*.suprx" -exec cp {} template_build/vita_release/module/ \;
+            # You can also copy additional modules as needed
+
+            # Zip vita_release
+            cd template_build
+            zip -r vita_release.zip vita_release
+            cd ..
+            # Create final template zip for Godot export template usage
+            zip -r vita-template.zip template_build/vita_release.zip
+
+            echo "✅ PSVita template packaging complete"
           else
-            echo "❌ No executable found for VELF conversion"
+            echo "❌ No executable found, cannot package PSVita template."
+            exit 1
           fi
 
       - name: Save Godot build cache (Always Runs)
         uses: ./.github/actions/godot-cache-save
         with:
-          cache-name: vita-template  # Same explicit name
-        if: always()
+          cache-name: vita-template
         continue-on-error: true
 
-      - name: Build Status Assessment
-        run: |
-          echo "=== Final Build Assessment ==="
-          
-          if [[ -f "temp-build/vita_release.velf" ]]; then
-            echo "🎉 COMPLETE SUCCESS: VELF file created!"
-            echo "BUILD_RESULT=complete" >> $GITHUB_ENV
-          elif [[ -f "temp-build/godot.vita.opt.32" ]]; then
-            echo "⚠️ PARTIAL SUCCESS: Executable created, VELF conversion failed"
-            echo "BUILD_RESULT=partial" >> $GITHUB_ENV
-          else
-            echo "❌ BUILD FAILED: No executable created"
-            echo "BUILD_RESULT=failed" >> $GITHUB_ENV
-          fi
-
-      - name: Upload artifact (Success)
-        if: env.BUILD_RESULT == 'complete'
-        uses: ./.github/actions/upload-artifact
+      - name: Upload PSVita template artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: godot-vita-complete-${{ github.sha }}
-          path: |
-            temp-build/vita_release.velf
-            temp-build/godot.vita.opt.32
-            temp-build/vita_release/
-
-      - name: Upload partial artifact (Partial Success)
-        if: env.BUILD_RESULT == 'partial'
-        uses: ./.github/actions/upload-artifact
-        with:
-          name: godot-vita-executable-${{ github.sha }}
-          path: |
-            temp-build/godot.vita.opt.32
+          name: vita-template
+          path: vita-template.zip
 
       - name: Debug Build Information
         if: always()
         run: |
           echo "=== Build Summary ==="
-          echo "Build Result: $BUILD_RESULT"
-          echo "Compilation Success: ${{ steps.compilation.outputs.BUILD_SUCCESS }}"
-          echo "VitaSDK Version: $VITASDK_VERSION"
-          
-          case "$BUILD_RESULT" in
-            "complete")
-              echo "🎉 PS Vita Godot template build COMPLETED successfully!"
-              ;;
-            "partial")
-              echo "⚠️ Linking succeeded, VELF creation failed"
-              echo "🔧 Next iteration will use cached compilation (5-10 minutes)"
-              ;;
-            "failed")
-              echo "❌ Build failed at linking stage"
-              echo "💾 All compilation work preserved in cache"
-              ;;
-          esac
+          arm-vita-eabi-gcc --version || echo "GCC version unknown"
+          if [[ -f "temp-build/eboot.bin" ]]; then
+            file temp-build/eboot.bin
+            du -h temp-build/eboot.bin
+          if [[ -f "vita-template.zip" ]]; then
+            unzip -l vita-template.zip
+          fi
+          else
+            echo "No eboot.bin produced. Build failure."
