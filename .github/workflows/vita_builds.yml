@@ -3,7 +3,7 @@ on: [push, pull_request]
 
 env:
   GODOT_BASE_BRANCH: 3.x
-  SCONSFLAGS: verbose=yes warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=True dry_run=0 CCFLAGS="-marm -mno-thumb-interwork" CXXFLAGS="-marm -mno-thumb-interwork" LINKFLAGS="-marm"
+  SCONSFLAGS: verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=True CCFLAGS="-marm -mno-thumb-interwork" CXXFLAGS="-marm -mno-thumb-interwork" LINKFLAGS="-marm"
   VITASDK: /usr/local/vitasdk
   VITASDK_VERSION: "vitasdk-x86_64-linux-gnu-2024-08-09_11-28-39"
   VITASDK_URL: "https://github.com/vitasdk/autobuilds/releases/download/master-linux-v2.527/vitasdk-x86_64-linux-gnu-2024-08-09_11-28-39.tar.bz2"
@@ -59,10 +59,16 @@ jobs:
           arm-vita-eabi-gcc --version
           echo "VitaSDK path: $VITASDK"
 
-      - name: Setup VitaSDK dependencies
+      - name: Setup VitaSDK dependencies (with clean installation)
         run: |
           export VITASDK=/usr/local/vitasdk
           export PATH=$VITASDK/bin:$PATH
+          
+          # Clean existing VitaSDK installation if it exists (safe in GitHub Actions VM)
+          if [[ -d "/usr/local/vitasdk" ]]; then
+            echo "Cleaning existing VitaSDK installation..."
+            sudo rm -rf /usr/local/vitasdk
+          fi
           
           git clone https://github.com/vitasdk/vdpm
           cd vdpm
@@ -90,7 +96,6 @@ jobs:
 
       - name: Prepare SCons directories
         run: |
-          rm -rf .sconf_temp .scons-cache
           mkdir -p .sconf_temp .scons-cache
           chmod -R 777 .sconf_temp .scons-cache
 
