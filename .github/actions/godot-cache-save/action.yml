@@ -1,5 +1,5 @@
-name: Save Godot build cache
-description: Save Godot build cache.
+name: Restore Godot build cache
+description: Restore Godot build cache.
 inputs:
   cache-name:
     description: The cache base name (job name by default).
@@ -10,8 +10,11 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Save .scons_cache directory
-      uses: actions/cache/save@v4
+    - name: Restore .scons-cache directory
+      uses: actions/cache/restore@v4
       with:
-        path: ${{inputs.scons-cache}}
-        key: ${{inputs.cache-name}}-${{env.GODOT_BASE_BRANCH}}-${{github.ref}}-${{github.sha}}
+        path: ${{ inputs.scons-cache }}
+        key: ${{ inputs.cache-name }}-${{ env.GODOT_BASE_BRANCH }}-${{ github.ref }}
+        restore-keys: |
+          ${{ inputs.cache-name }}-${{ env.GODOT_BASE_BRANCH }}-${{ github.ref }}
+          ${{ inputs.cache-name }}-${{ env.GODOT_BASE_BRANCH }}
