@@ -6,16 +6,13 @@ env:
   VITASDK: /usr/local/vitasdk
   VITASDK_VERSION: "vitasdk-x86_64-linux-gnu-2025-03-11_15-12-52"
   VITA_PACKAGES_EXTRA_COMMIT: d5b66fa7271abac9689541a59110adc17d06a616
-  EUID: 1
-
-concurrency:
-  group: ci-${{github.actor}}-${{github.head_ref || github.run_number}}-${{github.ref}}-vita
-  cancel-in-progress: true
 
 jobs:
   vita-template:
     runs-on: ubuntu-24.04
-    name: Template (target=release)
+    concurrency:
+      group: ci-${{github.actor}}-${{github.ref}}-vita
+      cancel-in-progress: true
 
     steps:
       - name: Checkout repository
@@ -29,7 +26,7 @@ jobs:
           cache-name: vita-template
         continue-on-error: true
 
-      - name: Setup python and scons
+      - name: Setup python & scons
         uses: ./.github/actions/godot-deps
 
       - name: Install build dependencies
@@ -37,21 +34,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake libarchive-tools fakeroot zip wget libelf-dev build-essential
 
-      - name: Setup VitaSDK
+      - name: Bootstrap VitaSDK if missing
         run: |
-          wget -q https://github.com/vitasdk/autobuilds/releases/download/master-linux-v2.529/${VITASDK_VERSION}.tar.bz2
-          sudo tar -xf ${VITASDK_VERSION}.tar.bz2 -C /usr/local/
-          echo "VITASDK=/usr/local/vitasdk" >> $GITHUB_ENV
+          if [ ! -d "$VITASDK" ]; then
+            git clone https://github.com/vitasdk/vdpm
+            cd vdpm
+            ./bootstrap-vitasdk.sh
+            ./install-all.sh
+            vdpm vita-rss-libdl
+          else
+            echo "VITASDK already present; skipping"
+          fi
           echo "/usr/local/vitasdk/bin" >> $GITHUB_PATH
-
-      - name: Install vdpm & vita-rss-libdl
-        run: |
-          git clone https://github.com/vitasdk/vdpm
-          cd vdpm
-          ./bootstrap-vitasdk.sh
-          ./install-all.sh
-          vdpm vita-rss-libdl
-          cd ..
 
       - name: Install vita-packages-extra (pvr_psp2)
         run: |
@@ -62,23 +56,19 @@ jobs:
           vita-makepkg
           vdpm *-arm.tar.xz
 
-      - name: Compile Godot for Vita (cache-safe)
+      - name: Compile Godot for Vita (ARM-only, cache-safe)
         run: |
-          export VITASDK=/usr/local/vitasdk
           export PATH=$VITASDK/bin:$PATH
           export SCONS_CACHE_DIR="$GITHUB_WORKSPACE/.scons-cache"
-          scons platform=vita \
-                target=release \
-                tools=false \
-                verbose=no \
-                warnings=no \
-                werror=no \
-                debug_symbols=no \
-                use_rtti=True \
-                disable_gles3=True \
+          ARM_FLAGS="-marm -mno-thumb-interwork -mno-unaligned-access \
+                     -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables \
+                     -Wno-psabi"
+          scons platform=vita target=release tools=false \
+                verbose=no warnings=no werror=no debug_symbols=no \
+                use_rtti=True disable_gles3=True \
                 cache_dir=$SCONS_CACHE_DIR \
-                CXXFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -marm -mno-unaligned-access -Wno-psabi" \
-                CCFLAGS="-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -marm -mno-unaligned-access -Wno-psabi" \
+                CCFLAGS="$ARM_FLAGS" \
+                CXXFLAGS="$ARM_FLAGS" \
                 LINKFLAGS="-Wl,--start-group -lpthread -lstdc++ -lm -lc -lgcc \
                 -lSceLibKernel_stub -lSceDisplay_stub -lSceCtrl_stub -lSceAudio_stub \
                 -lSceCommonDialog_stub -lSceNet_stub -lSceNetCtl_stub -lSceHttp_stub \
@@ -86,24 +76,28 @@ jobs:
                 -lSceFios2_stub -lSceAppUtil_stub -lSceTouch_stub -lSceAppMgr_stub \
                 -lSceGxm_stub -Wl,--end-group -Wl,--gc-sections -no-pie"
 
-      - name: Create VELF
+      - name: Create VELF & EBOOT.BIN
         run: |
-          export VITASDK=/usr/local/vitasdk
           export PATH=$VITASDK/bin:$PATH
           cp temp-build/godot.vita.opt.32 temp-build/vita_release_stripped
           arm-vita-eabi-strip -g temp-build/vita_release_stripped
           vita-elf-create temp-build/vita_release_stripped temp-build/vita_release.velf
+          vita-make-fself temp-build/vita_release.velf temp-build/eboot.bin
 
       - name: Package Vita Template
         run: |
-          # Prepare layout
-          rm -rf dist && mkdir -p dist/vita_release
-          # Copy generated vita_release/ directory
-          cp -r temp-build/vita_release dist/
-          # Create vita_release.zip (template content)
-          cd dist
-          zip -r vita_release.zip vita_release
-          # Wrap into vita-template.zip
+          mkdir -p template_build/vita_release/module template_build/vita_release/sce_sys/livearea/contents
+          cp temp-build/eboot.bin template_build/vita_release/
+          # Copy built plugins
+          find vita-packages-extra/pvr_psp2/dist -name '*.suprx' -exec cp {} template_build/vita_release/module/ \;
+          # Copy livearea template
+          cp template/livearea/contents/template.xml template_build/vita_release/sce_sys/livearea/contents/
+          # Copy or generate param.sfo & icon0.png
+          cp template/param.sfo template_build/vita_release/sce_sys/param.sfo
+          cp template/icon0.png template_build/vita_release/sce_sys/icon0.png
+          cd template_build
+          zip -r ../vita_release.zip vita_release
+          cd ..
           zip -r vita-template.zip vita_release.zip
 
       - name: Save Godot build cache
@@ -116,12 +110,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: vita-template-${{ github.sha }}
-          path: dist/vita-template.zip
+          path: vita-template.zip
 
       - name: Debug Build Information
         if: always()
         run: |
-          echo "=== Build Artifacts ==="
-          ls -R temp-build/vita_release || true
-          echo "=== Uploaded Dist ==="
-          ls -l dist || true
+          echo "Contents of vita_release.zip:"
+          unzip -l vita_release.zip || true
+          echo "Cache size:"
+          du -sh .scons-cache || echo "No cache"
