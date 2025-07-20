@@ -1,10 +1,11 @@
-name: 🎮 PSVita Builds
+name: 🎮 PSVita Template Build
 on: [push, pull_request]
 
 env:
   GODOT_BASE_BRANCH: 3.x
   VITASDK: /usr/local/vitasdk
-  VITASDK_VERSION: "vitasdk-x86_64-linux-gnu-2025-03-11_15-12-52"
+  VITASDK_VERSION: "vitasdk-x86_64-linux-gnu-2022-08-14_14-50-39"
+  VITASDK_URL: "https://github.com/vitasdk/buildscripts/releases/download/softfp-linux-v2.228/vitasdk-x86_64-linux-gnu-2022-08-14_14-50-39.tar.bz2"
   VITA_PACKAGES_EXTRA_COMMIT: d5b66fa7271abac9689541a59110adc17d06a616
 
 jobs:
@@ -34,26 +35,42 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake libarchive-tools fakeroot zip wget libelf-dev build-essential
 
-      - name: Bootstrap VitaSDK via vdpm
+      - name: Setup VitaSDK (2022 softfp)
+        run: |
+          wget -q "$VITASDK_URL" -O "${VITASDK_VERSION}.tar.bz2"
+          sudo tar -xf "${VITASDK_VERSION}.tar.bz2" -C /usr/local/
+          sudo chown -R $USER:$USER /usr/local/vitasdk
+          echo "VITASDK=/usr/local/vitasdk" >> $GITHUB_ENV
+          echo "/usr/local/vitasdk/bin" >> $GITHUB_PATH
+          arm-vita-eabi-gcc --version
+
+      - name: Bootstrap vdpm & install libs
         run: |
           git clone https://github.com/vitasdk/vdpm
           cd vdpm
-          ./bootstrap-vitasdk.sh
-          ./install-all.sh
+          chmod +x vdpm
+          # install core libs with softfp ABI
+          ./vdpm -f libdl
+          ./vdpm -f libogg
+          ./vdpm -f libzstd
+          ./vdpm -f libpcre2-32
+          ./vdpm install-all
           ./vdpm vita-rss-libdl
-        env:
-          VITASDK: ${{env.VITASDK}}
+          cd ..
 
-      - name: Install pvr_psp2 from vita-packages-extra
+      - name: Install vita-packages-extra (pvr_psp2)
         run: |
           git clone https://github.com/isage/vita-packages-extra
           cd vita-packages-extra
           git checkout $VITA_PACKAGES_EXTRA_COMMIT
           cd pvr_psp2
-          # Run the local vita-makepkg script
-          ../vdpm/vdpm vita-rss-libdl >/dev/null 2>&1 || true
+          export CFLAGS="-mfloat-abi=softfp -mfpu=vfp"
+          export CXXFLAGS="-mfloat-abi=softfp -mfpu=vfp"
+          export LDFLAGS="-mfloat-abi=softfp -mfpu=vfp"
           ./vita-makepkg
-          vdpm *-arm.tar.xz
+          # use local vdpm
+          ../vdpm/vdpm *-arm.tar.xz
+          cd ../..
 
       - name: Compile Godot for Vita (ARM-only, cache-safe)
         run: |
@@ -61,19 +78,14 @@ jobs:
           export SCONS_CACHE_DIR="$GITHUB_WORKSPACE/.scons-cache"
           ARM_FLAGS="-marm -mno-thumb-interwork -mno-unaligned-access \
                      -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables \
-                     -Wno-psabi"
+                     -mfloat-abi=softfp -mfpu=vfp -Wno-psabi"
           scons platform=vita target=release tools=false \
                 verbose=no warnings=no werror=no debug_symbols=no \
                 use_rtti=True disable_gles3=True \
                 cache_dir=$SCONS_CACHE_DIR \
                 CCFLAGS="$ARM_FLAGS" \
                 CXXFLAGS="$ARM_FLAGS" \
-                LINKFLAGS="-Wl,--start-group -lpthread -lstdc++ -lm -lc -lgcc \
-                -lSceLibKernel_stub -lSceDisplay_stub -lSceCtrl_stub -lSceAudio_stub \
-                -lSceCommonDialog_stub -lSceNet_stub -lSceNetCtl_stub -lSceHttp_stub \
-                -lSceShellSvc_stub -lSceSysmodule_stub -lScePvf_stub -lSceMotion_stub \
-                -lSceFios2_stub -lSceAppUtil_stub -lSceTouch_stub -lSceAppMgr_stub \
-                -lSceGxm_stub -Wl,--end-group -Wl,--gc-sections -no-pie"
+                LINKFLAGS="-Wl,--no-eh-frame-hdr -Wl,--gc-sections -no-pie -mfloat-abi=softfp -mfpu=vfp"
 
       - name: Create VELF & EBOOT.BIN
         run: |
@@ -86,19 +98,15 @@ jobs:
       - name: Package PSVita template
         run: |
           mkdir -p template_build/vita_release/module template_build/vita_release/sce_sys/livearea/contents
-          # Copy the generated EBOOT.BIN
           cp temp-build/eboot.bin template_build/vita_release/
-          # Copy all built SPRX modules
           find vita-packages-extra/pvr_psp2/dist -name '*.suprx' -exec cp {} template_build/vita_release/module/ \;
-          # Copy livearea metadata from your repo (adjust paths as needed)
+          # copy livearea metadata from your repo
           cp template/livearea/contents/template.xml template_build/vita_release/sce_sys/livearea/contents/
           cp template/param.sfo template_build/vita_release/sce_sys/param.sfo
           cp template/icon0.png template_build/vita_release/sce_sys/icon0.png
-          # Zip vita_release into vita_release.zip
           cd template_build
           zip -r ../vita_release.zip vita_release
           cd ..
-          # Wrap vivo_release.zip into vita-template.zip
           zip -r vita-template.zip vita_release.zip
 
       - name: Save Godot build cache
@@ -107,16 +115,16 @@ jobs:
           cache-name: vita-template
         continue-on-error: true
 
-      - name: Upload Vita Template
+      - name: Upload PSVita template artifact
         uses: actions/upload-artifact@v4
         with:
           name: vita-template-${{ github.sha }}
           path: vita-template.zip
 
-      - name: Debug Build Info
+      - name: Debug Build Information
         if: always()
         run: |
-          echo "=== Final archive contents ==="
+          echo "=== vita-template.zip contents ==="
           unzip -l vita-template.zip
-          echo "=== Cache size ==="
+          echo "=== cache directory size ==="
           du -sh .scons-cache || echo "no cache"
