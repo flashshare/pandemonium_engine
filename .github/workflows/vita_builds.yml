@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   vita-template:
-    runs-on: ubuntu-22.04                    # ← Ubuntu 22.04 for better availability
+    runs-on: ubuntu-22.04
     name: Template (target=release, tools=no)
 
     steps:
@@ -34,7 +34,7 @@ jobs:
       - name: Setup python and scons
         uses: ./.github/actions/godot-deps
 
-      - name: Install build dependencies (Ubuntu 22.04)
+      - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake libarchive-tools fakeroot zip wget libelf-dev build-essential
@@ -55,9 +55,8 @@ jobs:
           echo "/usr/local/vitasdk/bin" >> $GITHUB_PATH
           
           # Verify toolchain
-          echo "=== VitaSDK August 2024 + Ubuntu 22.04 Verification ==="
+          echo "=== VitaSDK August 2024 Verification ==="
           arm-vita-eabi-gcc --version
-          echo "Ubuntu version: $(lsb_release -d)"
           echo "VitaSDK path: $VITASDK"
 
       - name: Setup VitaSDK dependencies
@@ -84,14 +83,14 @@ jobs:
             vita-makepkg
           fi
           
-          # Install using vdpm from parent directory
+          # Install using vdpm
           ../../vdpm/vdpm *-arm.tar.xz
-          echo "✅ VitaSDK dependencies installed successfully"
+          echo "✅ VitaSDK dependencies installed"
 
-      - name: Compilation
+      - name: Compilation (with ARM mode to fix relocation 25)
         uses: ./.github/actions/godot-build
         with:
-          sconsflags: ${{ env.SCONSFLAGS }}
+          sconsflags: ${{ env.SCONSFLAGS }} CCFLAGS="-marm -mno-thumb-interwork" CXXFLAGS="-marm -mno-thumb-interwork" LINKFLAGS="-marm"
           platform: vita
           target: release
           tools: false
@@ -118,11 +117,10 @@ jobs:
           echo "Ubuntu Version: $(lsb_release -d)"
           echo "VitaSDK Version: $VITASDK_VERSION (August 2024)"
           echo "vita-packages-extra commit: $VITA_PACKAGES_EXTRA_COMMIT"
-          echo "Runner OS: ubuntu-22.04"
           echo "Build Date: $(date)"
           
           if [[ -f "temp-build/vita_release.velf" ]]; then
-            echo "✅ VELF file created by Godot platform automation"
+            echo "✅ VELF file created by Godot platform code"
             file temp-build/vita_release.velf
             du -h temp-build/vita_release.velf
           else
@@ -140,5 +138,3 @@ jobs:
           
           echo "=== Cache effectiveness ==="
           du -sh .scons-cache || echo "No cache directory"
-          
-          echo "===
