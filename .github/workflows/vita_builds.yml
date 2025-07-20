@@ -59,16 +59,10 @@ jobs:
           arm-vita-eabi-gcc --version
           echo "VitaSDK path: $VITASDK"
 
-      - name: Setup VitaSDK dependencies (with clean installation)
+      - name: Setup VitaSDK dependencies
         run: |
           export VITASDK=/usr/local/vitasdk
           export PATH=$VITASDK/bin:$PATH
-          
-          # Clean existing VitaSDK if it exists (safe in GitHub Actions VM)
-          if [[ -d "/usr/local/vitasdk" ]]; then
-            echo "Cleaning existing VitaSDK installation..."
-            sudo rm -rf /usr/local/vitasdk
-          fi
           
           git clone https://github.com/vitasdk/vdpm
           cd vdpm
@@ -96,7 +90,7 @@ jobs:
 
       - name: Prepare SCons directories
         run: |
-          mkdir -p .sconf_temp
+          mkdir -p .sconf_temp .scons-cache
           chmod -R 777 .sconf_temp .scons-cache
 
       - name: Compilation
