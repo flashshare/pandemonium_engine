@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   vita-template:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04                    # ← Ubuntu 22.04 for better availability
     name: Template (target=release, tools=no)
 
     steps:
@@ -34,7 +34,7 @@ jobs:
       - name: Setup python and scons
         uses: ./.github/actions/godot-deps
 
-      - name: Install build dependencies
+      - name: Install build dependencies (Ubuntu 22.04)
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake libarchive-tools fakeroot zip wget libelf-dev build-essential
@@ -55,8 +55,9 @@ jobs:
           echo "/usr/local/vitasdk/bin" >> $GITHUB_PATH
           
           # Verify toolchain
-          echo "=== VitaSDK August 2024 Verification ==="
+          echo "=== VitaSDK August 2024 + Ubuntu 22.04 Verification ==="
           arm-vita-eabi-gcc --version
+          echo "Ubuntu version: $(lsb_release -d)"
           echo "VitaSDK path: $VITASDK"
 
       - name: Setup VitaSDK dependencies
@@ -83,9 +84,9 @@ jobs:
             vita-makepkg
           fi
           
-          # Install using vdpm
+          # Install using vdpm from parent directory
           ../../vdpm/vdpm *-arm.tar.xz
-          echo "✅ VitaSDK dependencies installed"
+          echo "✅ VitaSDK dependencies installed successfully"
 
       - name: Compilation
         uses: ./.github/actions/godot-build
@@ -117,23 +118,27 @@ jobs:
           echo "Ubuntu Version: $(lsb_release -d)"
           echo "VitaSDK Version: $VITASDK_VERSION (August 2024)"
           echo "vita-packages-extra commit: $VITA_PACKAGES_EXTRA_COMMIT"
+          echo "Runner OS: ubuntu-22.04"
           echo "Build Date: $(date)"
           
           if [[ -f "temp-build/vita_release.velf" ]]; then
-            echo "✅ VELF file created by Godot platform code"
+            echo "✅ VELF file created by Godot platform automation"
             file temp-build/vita_release.velf
             du -h temp-build/vita_release.velf
           else
-            echo "❌ No VELF file - Godot platform automation may have failed"
+            echo "❌ No VELF file - checking for executable"
+            ls -la temp-build/
           fi
           
           if [[ -d "temp-build/vita_release" ]]; then
             echo "✅ PS Vita template directory created by Godot"
-            echo "Template contents:"
-            ls -la temp-build/vita_release/
+            echo "Template structure:"
+            find temp-build/vita_release -type f | head -10
           else
-            echo "❌ No vita_release directory - template packaging failed"
+            echo "❌ No vita_release directory found"
           fi
           
           echo "=== Cache effectiveness ==="
           du -sh .scons-cache || echo "No cache directory"
+          
+          echo "===
