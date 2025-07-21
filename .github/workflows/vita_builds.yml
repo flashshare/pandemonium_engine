@@ -24,7 +24,7 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Restore Godot build cache
+      - name: Restore SCons cache
         uses: ./.github/actions/godot-cache-restore
         with:
           cache-name: vita-template
@@ -41,14 +41,13 @@ jobs:
             libxcursor-dev libx11-dev libxext-dev libxfixes-dev libxi-dev \
             libxinerama-dev libxrender-dev libxrandr-dev libgl1-mesa-dev libglu1-mesa-dev
 
-      - name: Install VitaSDK (August 2024)
+      - name: Install VitaSDK (clean)
+// Remove any existing install before extracting new tarball
         run: |
-          wget -q "$VITASDK_URL" -O "${VITASDK_VERSION}.tar.bz2"
           sudo rm -rf /usr/local/vitasdk
+          wget -q "$VITASDK_URL" -O "${VITASDK_VERSION}.tar.bz2"
           sudo tar -xf "${VITASDK_VERSION}.tar.bz2" -C /usr/local/
           sudo chown -R $USER:$USER /usr/local/vitasdk
-          export VITASDK=/usr/local/vitasdk
-          export PATH=$VITASDK/bin:$PATH
           echo "VITASDK=/usr/local/vitasdk" >> $GITHUB_ENV
           echo "/usr/local/vitasdk/bin" >> $GITHUB_PATH
           arm-vita-eabi-gcc --version
@@ -109,7 +108,7 @@ jobs:
           cache-name: vita-template
         continue-on-error: true
 
-      - name: Upload PS Vita template artifact
+      - name: Upload PSVita template artifact
         uses: actions/upload-artifact@v4
         with:
           name: vita-template-${{ github.sha }}
@@ -130,12 +129,6 @@ jobs:
             echo "✅ VELF created"
           else
             echo "❌ No VELF; temp-build contents:"
-            ls -R temp-build || echo "temp-build missing"
+            ls -R temp-build || echo "No temp-build"
           fi
-          if [[ -d temp-build/vita_release ]]; then
-            echo "✅ vita_release directory exists"
-          else
-            echo "❌ No vita_release directory"
-          fi
-          echo "Cache size:"
-          du -sh .scons-cache || echo "No cache"
+          echo "Cache size: $(du -sh .scons-cache)"
