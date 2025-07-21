@@ -113,14 +113,32 @@ jobs:
           cache-name: vita-template
         continue-on-error: true
 
-      - name: Upload artifact
+      - name: Create Godot PSVita Export Template Zip (Correct Structure)
+        run: |
+          echo "=== Creating PSVita Export Template Zip ==="
+          mkdir -p vita_release/module
+
+          # Copy main Godot executable as expected by the template
+          cp temp-build/vita_release.velf vita_release/godot_vita.elf
+
+          # Copy required module libraries (adjust if your build produces different files)
+          cp $VITASDK/arm-vita-eabi/lib/libpvrPSP2_WSEGL.suprx vita_release/module/
+          cp $VITASDK/arm-vita-eabi/lib/libMGEGL.suprx vita_release/module/
+          cp $VITASDK/arm-vita-eabi/lib/libgpu_es4_kernel_ext.skprx vita_release/module/
+          cp $VITASDK/arm-vita-eabi/lib/libgpu_es4_ext.suprx vita_release/module/
+          cp $VITASDK/arm-vita-eabi/lib/libGLESv2.suprx vita_release/module/
+
+          # Zip it for Godot template use
+          cd vita_release
+          zip -9r ../vita_template_release.zip .
+          cd ..
+          echo "✅ Template zip created: vita_template_release.zip"
+
+      - name: Upload Godot PSVita Template Zip
         uses: ./.github/actions/upload-artifact
         with:
-          name: vita-template-${{ github.sha }}
-          path: |
-            temp-build/vita_release.velf
-            temp-build/godot.vita.opt.32
-            temp-build/vita_release/
+          name: vita-template-zip-${{ github.sha }}
+          path: vita_template_release.zip
 
       - name: Debug Build Information
         if: always()
@@ -140,12 +158,19 @@ jobs:
             ls -la temp-build/ 2>/dev/null || echo "No temp-build directory"
           fi
           
-          if [[ -d "temp-build/vita_release" ]]; then
-            echo "✅ PS Vita template directory created by Godot"
-            echo "Template structure:"
-            find temp-build/vita_release -type f | head -10
+          if [[ -d "vita_release/module" ]]; then
+            echo "✅ PSVita module directory for template created"
+            echo "Module files:"
+            ls -la vita_release/module
           else
-            echo "❌ No vita_release directory found"
+            echo "❌ No module directory found for template"
+          fi
+          
+          if [[ -f "vita_template_release.zip" ]]; then
+            echo "✅ PSVita template zip created"
+            unzip -l vita_template_release.zip | head -20
+          else
+            echo "❌ No template zip found"
           fi
           
           echo "=== Cache effectiveness ==="
