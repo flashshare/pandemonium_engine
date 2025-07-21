@@ -17,11 +17,9 @@ jobs:
       cancel-in-progress: true
 
     steps:
-    # 1) checkout
     - uses: actions/checkout@v4
       with: { submodules: recursive }
 
-    # 2) restore scons cache
     - uses: actions/cache@v4
       id: cache
       with:
@@ -31,11 +29,9 @@ jobs:
           scons-vita-${{github.ref}}
           scons-vita
 
-    # 3) python & scons
     - name: Setup Python & SCons
       uses: ./.github/actions/godot-deps
 
-    # 4) system deps (X11, GL, build tools)
     - name: Install system packages
       run: |
         sudo apt-get update -qq
@@ -44,7 +40,6 @@ jobs:
           libxcursor-dev libx11-dev libxext-dev libxfixes-dev libxi-dev \
           libxinerama-dev libxrender-dev libxrandr-dev libgl1-mesa-dev libglu1-mesa-dev
 
-    # 5) VitaSDK clean install + immediate PATH export
     - name: Install VitaSDK (Aug 2024)
       run: |
         sudo rm -rf $VITASDK_DIR
@@ -52,17 +47,14 @@ jobs:
         sudo tar -xf "$VITASDK_TAR" -C /usr/local/
         sudo chown -R $USER:$USER $VITASDK_DIR
 
-        # Make VitaSDK tools available right away
         export VITASDK=$VITASDK_DIR
         export PATH=$VITASDK/bin:$PATH
 
-        # Persist for later steps
         echo "VITASDK=$VITASDK_DIR" >> $GITHUB_ENV
-        echo "$VITASDK_DIR/bin"      >> $GITHUB_PATH
+        echo "$VITASDK_DIR/bin" >> $GITHUB_PATH
 
         arm-vita-eabi-gcc --version
 
-    # 6) vdpm + packages
     - name: Bootstrap vdpm & install packages
       run: |
         export VITASDK=$VITASDK_DIR
@@ -78,19 +70,17 @@ jobs:
         ./vdpm $EXTRA_PKG
         echo "Installed packages:" && ./vdpm -l
 
-    # 7) prepare scons temp + cache
     - name: Prepare SCons directories
       run: |
         rm -rf .sconf_temp .scons-cache
         mkdir -p .sconf_temp .scons-cache
         chmod -R 777 .sconf_temp .scons-cache
 
-    # 8) compile Godot for Vita
     - name: Compile Godot (PS Vita)
       run: |
         export VITASDK=$VITASDK_DIR
         export PATH=$VITASDK/bin:$PATH
-        scons --no-dry-run \
+        scons \
           p=vita target=release tools=no \
           verbose=no warnings=no werror=no debug_symbols=no \
           use_rtti=yes disable_gles3=yes \
@@ -99,14 +89,12 @@ jobs:
           CXXFLAGS="-marm -mno-thumb-interwork" \
           LINKFLAGS="-marm"
 
-    # 9) save scons cache
     - uses: actions/cache@v4
       if: always()
       with:
         path: .scons-cache
         key: scons-vita-${{github.ref}}-${{github.sha}}
 
-    # 10) upload the template
     - name: Upload PSVita template
       uses: actions/upload-artifact@v4
       with:
@@ -116,7 +104,6 @@ jobs:
           temp-build/godot.vita.opt.32
           temp-build/vita_release/
 
-    # 11) debug info
     - name: Debug info
       if: always()
       run: |
