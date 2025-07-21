@@ -38,7 +38,7 @@ jobs:
             cmake libarchive-tools fakeroot zip wget libelf-dev build-essential \
             libxcursor-dev libx11-dev libxext-dev libxfixes-dev libxi-dev \
             libxinerama-dev libxrender-dev libxrandr-dev libgl1-mesa-dev libglu1-mesa-dev \
-            libpcre2-dev
+            libpcre2-dev  # Added for pcre2.h header
 
       - name: Install VitaSDK (Aug 2024)
         run: |
