@@ -6,8 +6,7 @@ env:
   VITASDK_DIR: /usr/local/vitasdk
   VITASDK_TAR: vitasdk-x86_64-linux-gnu-2024-08-09_11-28-39.tar.bz2
   VITASDK_URL: https://github.com/vitasdk/autobuilds/releases/download/master-linux-v2.527
-  VDPM_PACKAGES: taihen pvr_psp2 libdl libogg libzstd libpcre2-32 theora opus jpeg png z
-  EXTRA_PKG: vita-rss-libdl
+  VITA_PACKAGES_EXTRA_COMMIT: d5b66fa7271abac9689541a59110adc17d06a616
 
 jobs:
   build-vita:
@@ -21,7 +20,6 @@ jobs:
       with: { submodules: recursive }
 
     - uses: actions/cache@v4
-      id: cache
       with:
         path: .scons-cache
         key: scons-vita-${{github.ref}}-${{github.sha}}
@@ -46,29 +44,46 @@ jobs:
         wget -q "$VITASDK_URL/$VITASDK_TAR"
         sudo tar -xf "$VITASDK_TAR" -C /usr/local/
         sudo chown -R $USER:$USER $VITASDK_DIR
-
         export VITASDK=$VITASDK_DIR
         export PATH=$VITASDK/bin:$PATH
-
         echo "VITASDK=$VITASDK_DIR" >> $GITHUB_ENV
         echo "$VITASDK_DIR/bin" >> $GITHUB_PATH
-
         arm-vita-eabi-gcc --version
 
-    - name: Bootstrap vdpm & install packages
+    - name: Install vdpm packages
       run: |
         export VITASDK=$VITASDK_DIR
         export PATH=$VITASDK/bin:$PATH
-
         git clone https://github.com/vitasdk/vdpm
         cd vdpm
         chmod +x vdpm install-all.sh
         ./install-all.sh
-        for pkg in $VDPM_PACKAGES; do
-          ./vdpm -f $pkg
-        done
-        ./vdpm $EXTRA_PKG
-        echo "Installed packages:" && ./vdpm -l
+        # Install core packages
+        ./vdpm -f taihen libdl libogg libzstd libpcre2-32 theora opus jpeg png z
+        ./vdpm vita-rss-libdl
+        cd ..
+
+    - name: Install vita-packages-extra with GPU ES4 headers
+      run: |
+        export VITASDK=$VITASDK_DIR
+        export PATH=$VITASDK/bin:$PATH
+        
+        # Clone and build vita-packages-extra for complete header set
+        git clone https://github.com/isage/vita-packages-extra
+        cd vita-packages-extra
+        git checkout $VITA_PACKAGES_EXTRA_COMMIT
+        
+        # Build and install pvr_psp2 package manually for complete headers
+        cd pvr_psp2
+        ./vita-makepkg
+        ../vdpm/vdpm *-arm.tar.xz
+        
+        # Verify GPU ES4 headers are installed
+        echo "=== Checking for GPU ES4 headers ==="
+        find $VITASDK_DIR -name "*psp2_pvr*" -type f | head -5
+        find $VITASDK_DIR -name "psp2_pvr_hint.h" || echo "psp2_pvr_hint.h not found"
+        
+        cd ../..
 
     - name: Prepare SCons directories
       run: |
@@ -80,13 +95,17 @@ jobs:
       run: |
         export VITASDK=$VITASDK_DIR
         export PATH=$VITASDK/bin:$PATH
+        
+        # Add explicit include paths for GPU ES4 headers
+        VITA_INCLUDES="-I$VITASDK_DIR/arm-vita-eabi/include -I$VITASDK_DIR/include"
+        
         scons \
           p=vita target=release tools=no \
           verbose=no warnings=no werror=no debug_symbols=no \
           use_rtti=yes disable_gles3=yes \
           cache_dir=.scons-cache \
-          CCFLAGS="-marm -mno-thumb-interwork" \
-          CXXFLAGS="-marm -mno-thumb-interwork" \
+          CCFLAGS="-marm -mno-thumb-interwork $VITA_INCLUDES" \
+          CXXFLAGS="-marm -mno-thumb-interwork $VITA_INCLUDES" \
           LINKFLAGS="-marm"
 
     - uses: actions/cache@v4
@@ -107,7 +126,9 @@ jobs:
     - name: Debug info
       if: always()
       run: |
-        echo "=== Runner ==="; lsb_release -d
-        echo "=== VitaSDK ==="; arm-vita-eabi-gcc --version
-        echo "=== Output tree ==="; ls -R temp-build || true
-        echo "=== Cache size ==="; du -sh .scons-cache || true
+        echo "=== Build Status ==="
+        ls -R temp-build || true
+        echo "=== GPU ES4 Header Check ==="
+        find $VITASDK_DIR -name "*psp2_pvr*" | head -10
+        echo "=== Cache ==="
+        du -sh .scons-cache || true
