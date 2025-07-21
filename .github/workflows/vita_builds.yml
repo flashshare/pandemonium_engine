@@ -37,7 +37,8 @@ jobs:
           sudo apt-get install -y \
             cmake libarchive-tools fakeroot zip wget libelf-dev build-essential \
             libxcursor-dev libx11-dev libxext-dev libxfixes-dev libxi-dev \
-            libxinerama-dev libxrender-dev libxrandr-dev libgl1-mesa-dev libglu1-mesa-dev
+            libxinerama-dev libxrender-dev libxrandr-dev libgl1-mesa-dev libglu1-mesa-dev \
+            libpcre2-dev
 
       - name: Install VitaSDK (Aug 2024)
         run: |
@@ -54,16 +55,13 @@ jobs:
       - name: Install VitaSDK packages (pinned)
         run: |
           export VITASDK=$VITASDK_DIR PATH=$VITASDK/bin:$PATH
-          # vdpm pinned to commit before SDL3 additions
           git clone https://github.com/vitasdk/vdpm
           cd vdpm
           git checkout $VDPM_COMMIT
           chmod +x vdpm
-          # install only required packages
           ./vdpm -f taihen libdl libogg libzstd libpcre2-32 theora opus jpeg png z
           ./vdpm -f vita-rss-libdl
           cd ..
-          # vita-packages-extra pinned for old pvr_psp2
           git clone https://github.com/isage/vita-packages-extra
           cd vita-packages-extra
           git checkout $VITA_PACKAGES_EXTRA_COMMIT
