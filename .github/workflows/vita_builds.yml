@@ -1,4 +1,4 @@
-name: "🎮 PSVita Build"
+name: "🎮 PSVita Builds"
 on: [push, pull_request]
 
 env:
@@ -7,128 +7,260 @@ env:
   VITASDK_TAR: vitasdk-x86_64-linux-gnu-2024-08-09_11-28-39.tar.bz2
   VITASDK_URL: https://github.com/vitasdk/autobuilds/releases/download/master-linux-v2.527
   VITA_PACKAGES_EXTRA_COMMIT: d5b66fa7271abac9689541a59110adc17d06a616
+  EUID: 1
+
+concurrency:
+  group: ci-${{github.actor}}-${{github.head_ref || github.run_number}}-${{github.ref}}-vita
+  cancel-in-progress: true
 
 jobs:
-  build-vita:
-    runs-on: ubuntu-22.04
-    concurrency:
-      group: ci-${{github.ref}}-vita
-      cancel-in-progress: true
+  vita-template:
+    runs-on: ubuntu-22.04  # Good balance of availability and compatibility
+    name: Vita Release Build
 
     steps:
-    - uses: actions/checkout@v4
-      with: { submodules: recursive }
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-    - uses: actions/cache@v4
-      with:
-        path: .scons-cache
-        key: scons-vita-${{github.ref}}-${{github.sha}}
-        restore-keys: |
-          scons-vita-${{github.ref}}
-          scons-vita
+      - name: Restore Godot build cache
+        uses: ./.github/actions/godot-cache-restore
+        with:
+          cache-name: vita-template
+        continue-on-error: true
 
-    - name: Setup Python & SCons
-      uses: ./.github/actions/godot-deps
+      - name: Setup python and scons
+        uses: ./.github/actions/godot-deps
 
-    - name: Install system packages
-      run: |
-        sudo apt-get update -qq
-        sudo apt-get install -y \
-          cmake fakeroot zip wget libelf-dev build-essential \
-          libxcursor-dev libx11-dev libxext-dev libxfixes-dev libxi-dev \
-          libxinerama-dev libxrender-dev libxrandr-dev libgl1-mesa-dev libglu1-mesa-dev
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake libarchive-tools fakeroot zip wget libelf-dev build-essential \
+            libxcursor-dev libx11-dev libxext-dev libxfixes-dev libxi-dev \
+            libxinerama-dev libxrender-dev libxrandr-dev libgl1-mesa-dev libglu1-mesa-dev
 
-    - name: Install VitaSDK (Aug 2024)
-      run: |
-        sudo rm -rf $VITASDK_DIR
-        wget -q "$VITASDK_URL/$VITASDK_TAR"
-        sudo tar -xf "$VITASDK_TAR" -C /usr/local/
-        sudo chown -R $USER:$USER $VITASDK_DIR
-        export VITASDK=$VITASDK_DIR
-        export PATH=$VITASDK/bin:$PATH
-        echo "VITASDK=$VITASDK_DIR" >> $GITHUB_ENV
-        echo "$VITASDK_DIR/bin" >> $GITHUB_PATH
-        arm-vita-eabi-gcc --version
+      - name: Setup VitaSDK (August 2024)
+        run: |
+          echo "=== Installing VitaSDK August 2024 ==="
+          sudo rm -rf $VITASDK_DIR
+          wget -q "$VITASDK_URL/$VITASDK_TAR"
+          sudo tar -xf "$VITASDK_TAR" -C /usr/local/
+          sudo chown -R $USER:$USER $VITASDK_DIR
+          
+          # Immediate environment setup
+          export VITASDK=$VITASDK_DIR
+          export PATH=$VITASDK/bin:$PATH
+          
+          # Persist for later steps
+          echo "VITASDK=$VITASDK_DIR" >> $GITHUB_ENV
+          echo "$VITASDK_DIR/bin" >> $GITHUB_PATH
+          
+          echo "=== August 2024 GCC Version ==="
+          arm-vita-eabi-gcc --version
 
-    - name: Install vdpm packages
-      run: |
-        export VITASDK=$VITASDK_DIR
-        export PATH=$VITASDK/bin:$PATH
-        git clone https://github.com/vitasdk/vdpm
-        cd vdpm
-        chmod +x vdpm install-all.sh
-        ./install-all.sh
-        # Install core packages
-        ./vdpm -f taihen libdl libogg libzstd libpcre2-32 theora opus jpeg png z
-        ./vdpm vita-rss-libdl
-        cd ..
+      - name: Install VitaSDK packages
+        run: |
+          export VITASDK=$VITASDK_DIR
+          export PATH=$VITASDK/bin:$PATH
+          
+          echo "=== Installing vdpm and core packages ==="
+          git clone https://github.com/vitasdk/vdpm
+          cd vdpm
+          chmod +x vdpm install-all.sh
+          ./install-all.sh
+          ./vdpm -f taihen libdl libogg libzstd libpcre2-32 theora opus jpeg png z
+          ./vdpm vita-rss-libdl
+          cd ..
+          
+          echo "=== Installing vita-packages-extra ==="
+          git clone https://github.com/isage/vita-packages-extra
+          cd vita-packages-extra
+          git checkout $VITA_PACKAGES_EXTRA_COMMIT
+          cd pvr_psp2
+          vita-makepkg
+          ../../vdpm/vdpm *-arm.tar.xz
+          echo "✅ August 2024 VitaSDK setup complete"
 
-    - name: Install vita-packages-extra with GPU ES4 headers
-      run: |
-        export VITASDK=$VITASDK_DIR
-        export PATH=$VITASDK/bin:$PATH
-        
-        # Clone and build vita-packages-extra for complete header set
-        git clone https://github.com/isage/vita-packages-extra
-        cd vita-packages-extra
-        git checkout $VITA_PACKAGES_EXTRA_COMMIT
-        
-        # Build and install pvr_psp2 package manually for complete headers
-        cd pvr_psp2
-        ./vita-makepkg
-        ../vdpm/vdpm *-arm.tar.xz
-        
-        # Verify GPU ES4 headers are installed
-        echo "=== Checking for GPU ES4 headers ==="
-        find $VITASDK_DIR -name "*psp2_pvr*" -type f | head -5
-        find $VITASDK_DIR -name "psp2_pvr_hint.h" || echo "psp2_pvr_hint.h not found"
-        
-        cd ../..
+      - name: Prepare SCons directories
+        run: |
+          rm -rf .sconf_temp .scons-cache
+          mkdir -p .sconf_temp .scons-cache
+          chmod -R 777 .sconf_temp .scons-cache
 
-    - name: Prepare SCons directories
-      run: |
-        rm -rf .sconf_temp .scons-cache
-        mkdir -p .sconf_temp .scons-cache
-        chmod -R 777 .sconf_temp .scons-cache
+      - name: Compilation with August 2024 VitaSDK
+        id: compilation
+        run: |
+          export VITASDK=$VITASDK_DIR
+          export PATH=$VITASDK/bin:$PATH
+          export SCONS_CACHE_DIR="$GITHUB_WORKSPACE/.scons-cache"
+          
+          BUILD_SUCCESS=false
+          BUILD_EXIT_CODE=0
+          
+          echo "🔨 Starting SCons build with August 2024 VitaSDK..."
+          
+          # Use ARM-only flags to prevent relocation type 25 errors
+          if scons platform=vita \
+                target=release \
+                tools=false \
+                verbose=no \
+                warnings=no \
+                werror=no \
+                debug_symbols=no \
+                use_rtti=True \
+                disable_gles3=True \
+                cache_dir="$SCONS_CACHE_DIR" \
+                CXXFLAGS="-marm -mno-thumb-interwork -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -Wno-psabi" \
+                CCFLAGS="-marm -mno-thumb-interwork -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -Wno-psabi" \
+                LINKFLAGS="-Wl,--start-group -lpthread -lstdc++ -lm -lc -lgcc -lSceLibKernel_stub -lSceDisplay_stub -lSceCtrl_stub -lSceAudio_stub -lSceCommonDialog_stub -lSceNet_stub -lSceNetCtl_stub -lSceHttp_stub -lSceShellSvc_stub -lSceSysmodule_stub -lScePvf_stub -lSceMotion_stub -lSceFios2_stub -lSceAppUtil_stub -lSceTouch_stub -lSceAppMgr_stub -lSceGxm_stub -Wl,--end-group -Wl,--gc-sections -no-pie"; then
+            BUILD_SUCCESS=true
+            BUILD_EXIT_CODE=0
+            echo "✅ Build completed successfully with August 2024 VitaSDK!"
+          else
+            BUILD_SUCCESS=false
+            BUILD_EXIT_CODE=$?
+            echo "⚠️ Build failed with exit code: $BUILD_EXIT_CODE"
+          fi
+          
+          # Check build artifacts
+          echo "=== Build Artifacts Check ==="
+          if [[ -f "temp-build/godot.vita.opt.32" ]]; then
+            echo "✅ Executable created: temp-build/godot.vita.opt.32"
+            ls -la temp-build/godot.vita.opt.32
+          else
+            echo "❌ No executable found"
+            ls -la temp-build/ 2>/dev/null || echo "No temp-build directory"
+          fi
+          
+          # Save build results
+          echo "BUILD_SUCCESS=$BUILD_SUCCESS" >> $GITHUB_OUTPUT
+          echo "BUILD_EXIT_CODE=$BUILD_EXIT_CODE" >> $GITHUB_OUTPUT
+          
+          exit $BUILD_EXIT_CODE
 
-    - name: Compile Godot (PS Vita)
-      run: |
-        export VITASDK=$VITASDK_DIR
-        export PATH=$VITASDK/bin:$PATH
-        
-        # Add explicit include paths for GPU ES4 headers
-        VITA_INCLUDES="-I$VITASDK_DIR/arm-vita-eabi/include -I$VITASDK_DIR/include"
-        
-        scons \
-          p=vita target=release tools=no \
-          verbose=no warnings=no werror=no debug_symbols=no \
-          use_rtti=yes disable_gles3=yes \
-          cache_dir=.scons-cache \
-          CCFLAGS="-marm -mno-thumb-interwork $VITA_INCLUDES" \
-          CXXFLAGS="-marm -mno-thumb-interwork $VITA_INCLUDES" \
-          LINKFLAGS="-marm"
+      - name: VELF Creation
+        if: steps.compilation.outputs.BUILD_SUCCESS == 'true'
+        run: |
+          echo "=== VELF Creation with August 2024 Tools ==="
+          export VITASDK=$VITASDK_DIR
+          export PATH=$VITASDK/bin:$PATH
+          
+          if [[ -f "temp-build/godot.vita.opt.32" ]]; then
+            echo "✅ Executable found: $(du -h temp-build/godot.vita.opt.32 | cut -f1)"
+            cd temp-build
+            
+            # Create VELF using August 2024 vita-elf-create
+            cp godot.vita.opt.32 vita_release_stripped
+            if arm-vita-eabi-strip -g vita_release_stripped && \
+               vita-elf-create vita_release_stripped vita_release.velf; then
+              echo "✅ SUCCESS: August 2024 VELF creation worked!"
+              ls -la vita_release.velf
+              echo "BUILD_RESULT=complete" >> $GITHUB_ENV
+            else
+              echo "❌ VELF creation failed"
+              echo "BUILD_RESULT=partial" >> $GITHUB_ENV
+            fi
+          else
+            echo "❌ No executable found for VELF conversion"
+            echo "BUILD_RESULT=failed" >> $GITHUB_ENV
+          fi
 
-    - uses: actions/cache@v4
-      if: always()
-      with:
-        path: .scons-cache
-        key: scons-vita-${{github.ref}}-${{github.sha}}
+      - name: Create Complete PS Vita Template
+        if: env.BUILD_RESULT == 'complete'
+        run: |
+          echo "=== Creating PS Vita Template with August 2024 VitaSDK ==="
+          export VITASDK=$VITASDK_DIR
+          export PATH=$VITASDK/bin:$PATH
+          
+          # Create EBOOT.BIN
+          vita-make-fself temp-build/vita_release.velf temp-build/eboot.bin
+          
+          # Create Godot template structure
+          mkdir -p template_build/vita_release/module
+          mkdir -p template_build/vita_release/sce_sys/livearea/contents
+          
+          # Copy executable
+          cp temp-build/eboot.bin template_build/vita_release/
+          
+          # Copy modules
+          find vita-packages-extra/pvr_psp2/dist -name '*.suprx' -exec cp {} template_build/vita_release/module/ \;
+          
+          # Create template assets
+          if [[ -f "template/param.sfo" ]]; then
+            cp template/param.sfo template_build/vita_release/sce_sys/param.sfo
+          else
+            touch template_build/vita_release/sce_sys/param.sfo
+          fi
+          
+          if [[ -f "template/icon0.png" ]]; then
+            cp template/icon0.png template_build/vita_release/sce_sys/icon0.png
+          else
+            touch template_build/vita_release/sce_sys/icon0.png
+          fi
+          
+          # Create livearea template
+          cat > template_build/vita_release/sce_sys/livearea/contents/template.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <livearea style="a1" format-ver="01.00" content-rev="1">
+            <livearea-background>
+              <image>bg0.png</image>
+            </livearea-background>
+            <gate>
+              <startup-image>startup.png</startup-image>
+            </gate>
+          </livearea>
+          EOF
+          
+          # Package template
+          cd template_build
+          zip -r ../vita_release.zip vita_release
+          cd ..
+          zip -r vita-template.zip vita_release.zip
+          
+          echo "✅ August 2024 PS Vita template created: vita-template.zip"
 
-    - name: Upload PSVita template
-      uses: actions/upload-artifact@v4
-      with:
-        name: vita-template-${{github.sha}}
-        path: |
-          temp-build/vita_release.velf
-          temp-build/godot.vita.opt.32
-          temp-build/vita_release/
+      - name: Save Godot build cache
+        uses: ./.github/actions/godot-cache-save
+        with:
+          cache-name: vita-template
+        continue-on-error: true
 
-    - name: Debug info
-      if: always()
-      run: |
-        echo "=== Build Status ==="
-        ls -R temp-build || true
-        echo "=== GPU ES4 Header Check ==="
-        find $VITASDK_DIR -name "*psp2_pvr*" | head -10
-        echo "=== Cache ==="
-        du -sh .scons-cache || true
+      - name: Upload Complete PS Vita Template
+        if: env.BUILD_RESULT == 'complete'
+        uses: ./.github/actions/upload-artifact
+        with:
+          name: vita-template-aug2024-${{ github.sha }}
+          path: vita-template.zip
+
+      - name: Upload Partial Build
+        if: env.BUILD_RESULT == 'partial'
+        uses: ./.github/actions/upload-artifact
+        with:
+          name: vita-executable-aug2024-${{ github.sha }}
+          path: temp-build/godot.vita.opt.32
+
+      - name: Debug Build Information
+        if: always()
+        run: |
+          echo "=== August 2024 VitaSDK Build Summary ==="
+          echo "Build Result: $BUILD_RESULT"
+          echo "VitaSDK: $VITASDK_TAR (August 2024)"
+          echo "vita-packages-extra: $VITA_PACKAGES_EXTRA_COMMIT"
+          
+          case "$BUILD_RESULT" in
+            "complete")
+              echo "🎉 PS Vita Godot template COMPLETED with August 2024 VitaSDK!"
+              echo "✅ Optimal balance of stability and compatibility"
+              echo "🎯 Ready for Godot export template installation"
+              ;;
+            "partial")
+              echo "⚠️ Compilation succeeded, VELF creation failed"
+              echo "💡 Template can be created manually from executable"
+              ;;
+            *)
+              echo "❌ Build failed - check compilation logs above"
+              ;;
+          esac
+          
+          echo "📊 Cache Status: $(du -sh .scons-cache 2>/dev/null || echo 'No cache')"
