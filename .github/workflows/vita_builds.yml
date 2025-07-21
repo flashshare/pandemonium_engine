@@ -99,10 +99,10 @@ jobs:
           mkdir -p .sconf_temp .scons-cache
           chmod -R 777 .sconf_temp .scons-cache
 
-      - name: Compilation
+      - name: Compilation (with dry_run=no fix)
         uses: ./.github/actions/godot-build
         with:
-          sconsflags: ${{ env.SCONSFLAGS }}
+          sconsflags: verbose=no warnings=no werror=no debug_symbols=no use_rtti=True disable_gles3=True dry_run=no CCFLAGS="-marm -mno-thumb-interwork" CXXFLAGS="-marm -mno-thumb-interwork" LINKFLAGS="-marm"
           platform: vita
           target: release
           tools: false
