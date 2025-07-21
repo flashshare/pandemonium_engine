@@ -1,4 +1,4 @@
-name: 🎮 PSVita Template Build
+name: 🎮 PSVita Builds
 on: [push, pull_request]
 
 env:
@@ -7,13 +7,16 @@ env:
   VITASDK_VERSION: "vitasdk-x86_64-linux-gnu-2024-08-09_11-28-39"
   VITASDK_URL: "https://github.com/vitasdk/autobuilds/releases/download/master-linux-v2.527/vitasdk-x86_64-linux-gnu-2024-08-09_11-28-39.tar.bz2"
   VITA_PACKAGES_EXTRA_COMMIT: d5b66fa7271abac9689541a59110adc17d06a616
+  EUID: 1
+
+concurrency:
+  group: ci-${{ github.actor }}-${{ github.head_ref || github.run_number }}-${{ github.ref }}-vita
+  cancel-in-progress: true
 
 jobs:
   vita-template:
     runs-on: ubuntu-22.04
-    concurrency:
-      group: ci-${{github.actor}}-${{github.ref}}-vita
-      cancel-in-progress: true
+    name: Template (target=release, tools=no)
 
     steps:
       - name: Checkout repository
@@ -30,203 +33,75 @@ jobs:
       - name: Setup Python & SCons
         uses: ./.github/actions/godot-deps
 
-      - name: Install build dependencies (Ubuntu 20.04)
+      - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake libarchive-tools fakeroot zip wget libelf-dev build-essential
+          sudo apt-get install -y \
+            cmake libarchive-tools fakeroot zip wget libelf-dev build-essential \
+            libxcursor-dev libx11-dev libxext-dev libxfixes-dev libxi-dev \
+            libxinerama-dev libxrender-dev libxrandr-dev libgl1-mesa-dev libglu1-mesa-dev
 
-      - name: Setup VitaSDK (August 2024 stable)
+      - name: Install VitaSDK (August 2024)
         run: |
-          echo "Installing VitaSDK version: $VITASDK_VERSION"
           wget -q "$VITASDK_URL" -O "${VITASDK_VERSION}.tar.bz2"
+          sudo rm -rf /usr/local/vitasdk
           sudo tar -xf "${VITASDK_VERSION}.tar.bz2" -C /usr/local/
           sudo chown -R $USER:$USER /usr/local/vitasdk
-          
-          # Set environment for this shell
           export VITASDK=/usr/local/vitasdk
           export PATH=$VITASDK/bin:$PATH
-          
-          # Persist for later steps
           echo "VITASDK=/usr/local/vitasdk" >> $GITHUB_ENV
           echo "/usr/local/vitasdk/bin" >> $GITHUB_PATH
-          
-          # Verify toolchain
-          echo "=== VitaSDK 2024 Verification ==="
           arm-vita-eabi-gcc --version
-          echo "VitaSDK path: $VITASDK"
 
-      - name: Bootstrap vdpm & install core libraries
+      - name: Bootstrap vdpm & install core libs
         run: |
           export VITASDK=/usr/local/vitasdk
           export PATH=$VITASDK/bin:$PATH
-          
           git clone https://github.com/vitasdk/vdpm
           cd vdpm
-          chmod +x vdpm
-          
-          # Install essential libraries
-          ./vdpm -f libdl
-          ./vdpm -f libogg  
-          ./vdpm -f libzstd
-          ./vdpm -f libpcre2-32
-          ./vdpm -f taihen              # Install taihen explicitly
-          ./vdpm install-all
-          ./vdpm vita-rss-libdl
-          
-          # Verify taihen installation
-          if [[ -f "$VITASDK/arm-vita-eabi/include/taihen.h" ]]; then
-            echo "✅ taihen.h found in VitaSDK"
-          else
-            echo "❌ taihen.h missing - trying alternative installation"
-            find $VITASDK -name "taihen.h" || echo "No taihen.h found"
-          fi
+          ./bootstrap-vitasdk.sh
+          ./install-all.sh
+          vdpm vita-rss-libdl
           cd ..
 
       - name: Install vita-packages-extra (pvr_psp2)
         run: |
           export VITASDK=/usr/local/vitasdk
           export PATH=$VITASDK/bin:$PATH
-          
           git clone https://github.com/isage/vita-packages-extra
           cd vita-packages-extra
           git checkout $VITA_PACKAGES_EXTRA_COMMIT
           cd pvr_psp2
-          
-          # Build with 2024 VitaSDK compatibility
-          if [[ -x "./vita-makepkg" ]]; then
-            ./vita-makepkg
-          else
-            vita-makepkg
-          fi
-          
-          # Install the package
+          ./vita-makepkg
           ../../vdpm/vdpm *-arm.tar.xz
           cd ../..
 
-      - name: Pre-build verification
+      - name: Prepare SCons directories
         run: |
-          export VITASDK=/usr/local/vitasdk
-          export PATH=$VITASDK/bin:$PATH
-          
-          echo "=== 2024 VitaSDK Pre-build Check ==="
-          echo "Ubuntu version: $(lsb_release -d)"
-          echo "VitaSDK version: $VITASDK_VERSION"
-          echo "GCC version: $(arm-vita-eabi-gcc --version | head -1)"
-          
-          echo "=== Critical headers verification ==="
-          ls -la $VITASDK/arm-vita-eabi/include/taihen.h || echo "taihen.h missing"
-          ls -la $VITASDK/arm-vita-eabi/include/vitasdk.h || echo "vitasdk.h missing"
+          rm -rf .sconf_temp .scons-cache
+          mkdir -p .sconf_temp .scons-cache
+          chmod -R 777 .sconf_temp .scons-cache
 
-      - name: Compile Godot for Vita (2024 VitaSDK + ARM optimized)
+      - name: Compile Godot for Vita
         run: |
           export VITASDK=/usr/local/vitasdk
           export PATH=$VITASDK/bin:$PATH
           export SCONS_CACHE_DIR="$GITHUB_WORKSPACE/.scons-cache"
-          
-          # ARM-only flags optimized for 2024 VitaSDK
-          ARM_FLAGS="-marm -mno-thumb-interwork -mno-unaligned-access \
-                     -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables \
-                     -Wno-psabi"
-          
-          # Explicit include paths for 2024 VitaSDK
-          INCLUDE_FLAGS="-I$VITASDK/arm-vita-eabi/include -I$VITASDK/include"
-          
-          echo "🔨 Starting Godot compilation with 2024 VitaSDK"
-          
-          scons platform=vita target=release tools=false \
-                verbose=no warnings=no werror=no debug_symbols=no \
-                use_rtti=True disable_gles3=True \
-                cache_dir=$SCONS_CACHE_DIR \
-                CCFLAGS="$ARM_FLAGS $INCLUDE_FLAGS" \
-                CXXFLAGS="$ARM_FLAGS $INCLUDE_FLAGS" \
-                LINKFLAGS="-Wl,--start-group -lpthread -lstdc++ -lm -lc -lgcc -ltaihen_stub \
-                -lSceLibKernel_stub -lSceDisplay_stub -lSceCtrl_stub -lSceAudio_stub \
-                -lSceCommonDialog_stub -lSceNet_stub -lSceNetCtl_stub -lSceHttp_stub \
-                -lSceShellSvc_stub -lSceSysmodule_stub -lScePvf_stub -lSceMotion_stub \
-                -lSceFios2_stub -lSceAppUtil_stub -lSceTouch_stub -lSceAppMgr_stub \
-                -lSceGxm_stub -Wl,--end-group -Wl,--gc-sections -no-pie"
-
-      - name: Create VELF & EBOOT.BIN
-        run: |
-          export VITASDK=/usr/local/vitasdk
-          export PATH=$VITASDK/bin:$PATH
-          
-          echo "=== Converting ELF to VELF with 2024 toolchain ==="
-          
-          # Verify executable exists
-          if [[ ! -f "temp-build/godot.vita.opt.32" ]]; then
-            echo "❌ Godot executable not found!"
-            ls -la temp-build/
-            exit 1
-          fi
-          
-          # Create VELF (should work with 2024 vita-elf-create)
-          cp temp-build/godot.vita.opt.32 temp-build/vita_release_stripped
-          arm-vita-eabi-strip -g temp-build/vita_release_stripped
-          vita-elf-create temp-build/vita_release_stripped temp-build/vita_release.velf
-          
-          # Create EBOOT.BIN
-          vita-make-fself temp-build/vita_release.velf temp-build/eboot.bin
-          
-          echo "✅ VELF and EBOOT.BIN created successfully"
-          ls -la temp-build/vita_release.velf temp-build/eboot.bin
-
-      - name: Package PSVita template
-        run: |
-          echo "=== Packaging complete PS Vita template ==="
-          
-          # Create template directory structure
-          mkdir -p template_build/vita_release/module
-          mkdir -p template_build/vita_release/sce_sys/livearea/contents
-          
-          # Copy the built EBOOT.BIN
-          cp temp-build/eboot.bin template_build/vita_release/
-          
-          # Copy all SUPRX modules from vita-packages-extra
-          find vita-packages-extra/pvr_psp2/dist -name '*.suprx' -exec cp {} template_build/vita_release/module/ \;
-          
-          # Create or copy template assets
-          if [[ -f "template/livearea/contents/template.xml" ]]; then
-            cp template/livearea/contents/template.xml template_build/vita_release/sce_sys/livearea/contents/
-          else
-            # Create minimal livearea template
-            cat > template_build/vita_release/sce_sys/livearea/contents/template.xml << 'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <livearea style="a1" format-ver="01.00" content-rev="1">
-            <livearea-background>
-              <image>bg0.png</image>
-            </livearea-background>
-            <gate>
-              <startup-image>startup.png</startup-image>
-            </gate>
-          </livearea>
-          EOF
-          fi
-          
-          # Create or copy param.sfo and icon0.png
-          if [[ -f "template/param.sfo" ]]; then
-            cp template/param.sfo template_build/vita_release/sce_sys/param.sfo
-          else
-            touch template_build/vita_release/sce_sys/param.sfo
-          fi
-          
-          if [[ -f "template/icon0.png" ]]; then
-            cp template/icon0.png template_build/vita_release/sce_sys/icon0.png
-          else
-            touch template_build/vita_release/sce_sys/icon0.png
-          fi
-          
-          # Create vita_release.zip
-          cd template_build
-          zip -r ../vita_release.zip vita_release
-          cd ..
-          
-          # Create final vita-template.zip
-          zip -r vita-template.zip vita_release.zip
-          
-          echo "✅ PS Vita template packaging complete"
-          echo "Template structure:"
-          unzip -l vita_release.zip | head -20
+          scons \
+            --no-dry-run \
+            p=vita \
+            target=release \
+            tools=false \
+            verbose=no \
+            warnings=no \
+            werror=no \
+            debug_symbols=no \
+            use_rtti=True \
+            disable_gles3=True \
+            cache_dir=$SCONS_CACHE_DIR \
+            CCFLAGS="-marm -mno-thumb-interwork" \
+            CXXFLAGS="-marm -mno-thumb-interwork" \
+            LINKFLAGS="-marm"
 
       - name: Save Godot build cache
         uses: ./.github/actions/godot-cache-save
@@ -234,40 +109,33 @@ jobs:
           cache-name: vita-template
         continue-on-error: true
 
-      - name: Upload PSVita template artifact
+      - name: Upload PS Vita template artifact
         uses: actions/upload-artifact@v4
         with:
-          name: vita-template-2024-${{ github.sha }}
-          path: vita-template.zip
+          name: vita-template-${{ github.sha }}
+          path: |
+            temp-build/vita_release.velf
+            temp-build/godot.vita.opt.32
+            temp-build/vita_release/
 
       - name: Debug Build Information
         if: always()
         run: |
-          echo "=== Final Build Summary ==="
-          echo "Ubuntu Version: $(lsb_release -d)"
-          echo "VitaSDK Version: $VITASDK_VERSION (August 2024)"
-          echo "vita-packages-extra commit: $VITA_PACKAGES_EXTRA_COMMIT"
-          echo "Build Date: $(date)"
-          
-          if [[ -f "temp-build/eboot.bin" ]]; then
-            echo "✅ EBOOT.BIN created successfully"
-            file temp-build/eboot.bin
-            du -h temp-build/eboot.bin
+          echo "=== Build Summary ==="
+          echo "Ubuntu: $(lsb_release -d)"
+          echo "VitaSDK: $VITASDK_VERSION"
+          echo "Commit: $VITA_PACKAGES_EXTRA_COMMIT"
+          echo "Date: $(date)"
+          if [[ -f temp-build/vita_release.velf ]]; then
+            echo "✅ VELF created"
           else
-            echo "❌ No EBOOT.BIN produced"
+            echo "❌ No VELF; temp-build contents:"
+            ls -R temp-build || echo "temp-build missing"
           fi
-          
-          if [[ -f "vita-template.zip" ]]; then
-            echo "✅ Complete template package created"
-            echo "Final template size: $(du -h vita-template.zip)"
-            echo "=== Template contents preview ==="
-            unzip -l vita-template.zip
+          if [[ -d temp-build/vita_release ]]; then
+            echo "✅ vita_release directory exists"
           else
-            echo "❌ No template package created"
+            echo "❌ No vita_release directory"
           fi
-          
-          echo "=== Cache effectiveness ==="
-          du -sh .scons-cache || echo "No cache directory"
-          
-          echo "=== VitaSDK 2024 verification ==="
-          arm-vita-eabi-gcc --version | head -3
+          echo "Cache size:"
+          du -sh .scons-cache || echo "No cache"
