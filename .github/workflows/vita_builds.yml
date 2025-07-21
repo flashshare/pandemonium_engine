@@ -6,21 +6,24 @@ env:
   VITASDK_DIR: /usr/local/vitasdk
   VITASDK_TAR: vitasdk-x86_64-linux-gnu-2024-08-09_11-28-39.tar.bz2
   VITASDK_URL: https://github.com/vitasdk/autobuilds/releases/download/master-linux-v2.527
-  EXTRA_COMMIT: d5b66fa7271abac9689541a59110adc17d06a616
+  VDPM_PACKAGES: taihen pvr_psp2 libdl libogg libzstd libpcre2-32 theora opus jpeg png z
+  EXTRA_PKG: vita-rss-libdl
 
 jobs:
-  vita:
+  build-vita:
     runs-on: ubuntu-22.04
     concurrency:
       group: ci-${{github.ref}}-vita
       cancel-in-progress: true
 
     steps:
+    # 1) checkout
     - uses: actions/checkout@v4
-      with: {submodules: recursive}
+      with: { submodules: recursive }
 
+    # 2) restore scons cache
     - uses: actions/cache@v4
-      id: cache-restore
+      id: cache
       with:
         path: .scons-cache
         key: scons-vita-${{github.ref}}-${{github.sha}}
@@ -28,93 +31,96 @@ jobs:
           scons-vita-${{github.ref}}
           scons-vita
 
-    - name: Set-up Python & SCons
+    # 3) python & scons
+    - name: Setup Python & SCons
       uses: ./.github/actions/godot-deps
 
-    - name: APT dependencies
+    # 4) system deps (X11, GL, build tools)
+    - name: Install system packages
       run: |
         sudo apt-get update -qq
-        sudo apt-get install -y cmake fakeroot zip wget libelf-dev build-essential \
+        sudo apt-get install -y \
+          cmake fakeroot zip wget libelf-dev build-essential \
           libxcursor-dev libx11-dev libxext-dev libxfixes-dev libxi-dev \
           libxinerama-dev libxrender-dev libxrandr-dev libgl1-mesa-dev libglu1-mesa-dev
 
+    # 5) VitaSDK clean install + immediate PATH export
     - name: Install VitaSDK (Aug 2024)
       run: |
-        sudo rm -rf ${{env.VITASDK_DIR}}
-        wget -q "${{env.VITASDK_URL}}/${{env.VITASDK_TAR}}"
-        sudo tar -xf "${{env.VITASDK_TAR}}" -C /usr/local/
-        sudo chown -R $USER:$USER ${{env.VITASDK_DIR}}
-        
-        # Export PATH immediately for this step
-        export VITASDK=${{env.VITASDK_DIR}}
+        sudo rm -rf $VITASDK_DIR
+        wget -q "$VITASDK_URL/$VITASDK_TAR"
+        sudo tar -xf "$VITASDK_TAR" -C /usr/local/
+        sudo chown -R $USER:$USER $VITASDK_DIR
+
+        # Make VitaSDK tools available right away
+        export VITASDK=$VITASDK_DIR
         export PATH=$VITASDK/bin:$PATH
-        
+
         # Persist for later steps
-        echo "VITASDK=${{env.VITASDK_DIR}}" >> $GITHUB_ENV
-        echo "${{env.VITASDK_DIR}}/bin" >> $GITHUB_PATH
-        
-        # Now arm-vita-eabi-gcc is available
+        echo "VITASDK=$VITASDK_DIR" >> $GITHUB_ENV
+        echo "$VITASDK_DIR/bin"      >> $GITHUB_PATH
+
         arm-vita-eabi-gcc --version
 
+    # 6) vdpm + packages
     - name: Bootstrap vdpm & install packages
       run: |
-        export VITASDK=${{env.VITASDK_DIR}}
+        export VITASDK=$VITASDK_DIR
         export PATH=$VITASDK/bin:$PATH
-        
+
         git clone https://github.com/vitasdk/vdpm
         cd vdpm
-        chmod +x vdpm
-        ./bootstrap-vitasdk.sh
+        chmod +x vdpm install-all.sh
         ./install-all.sh
-        ./vdpm -f taihen pvr_psp2 libdl libogg libzstd libpcre2-32 theora opus jpeg png z
-        ./vdpm vita-rss-libdl
-        echo "vdpm list:" && ./vdpm -l | head
+        for pkg in $VDPM_PACKAGES; do
+          ./vdpm -f $pkg
+        done
+        ./vdpm $EXTRA_PKG
+        echo "Installed packages:" && ./vdpm -l
 
-    - name: Prepare SCons dirs
+    # 7) prepare scons temp + cache
+    - name: Prepare SCons directories
       run: |
+        rm -rf .sconf_temp .scons-cache
         mkdir -p .sconf_temp .scons-cache
         chmod -R 777 .sconf_temp .scons-cache
 
+    # 8) compile Godot for Vita
     - name: Compile Godot (PS Vita)
-      env:
-        SCONS_CACHE: .scons-cache
-        SCONS_CACHE_LIMIT: 7168
       run: |
-        export VITASDK=${{env.VITASDK_DIR}}
+        export VITASDK=$VITASDK_DIR
         export PATH=$VITASDK/bin:$PATH
-        
         scons --no-dry-run \
           p=vita target=release tools=no \
           verbose=no warnings=no werror=no debug_symbols=no \
           use_rtti=yes disable_gles3=yes \
+          cache_dir=.scons-cache \
           CCFLAGS="-marm -mno-thumb-interwork" \
           CXXFLAGS="-marm -mno-thumb-interwork" \
           LINKFLAGS="-marm"
 
+    # 9) save scons cache
     - uses: actions/cache@v4
       if: always()
       with:
         path: .scons-cache
         key: scons-vita-${{github.ref}}-${{github.sha}}
 
-    - name: Upload PS Vita template
+    # 10) upload the template
+    - name: Upload PSVita template
       uses: actions/upload-artifact@v4
-      if: success()
       with:
         name: vita-template-${{github.sha}}
         path: |
-          temp-build/vita_release/
           temp-build/vita_release.velf
           temp-build/godot.vita.opt.32
+          temp-build/vita_release/
 
+    # 11) debug info
     - name: Debug info
       if: always()
       run: |
-        export VITASDK=${{env.VITASDK_DIR}}
-        export PATH=$VITASDK/bin:$PATH
-        
         echo "=== Runner ==="; lsb_release -d
-        echo "=== VitaSDK ==="; arm-vita-eabi-gcc --version | head -1
-        echo "=== Build outputs ==="
-        ls -R temp-build || true
-        echo "Cache size:"; du -sh .scons-cache || true
+        echo "=== VitaSDK ==="; arm-vita-eabi-gcc --version
+        echo "=== Output tree ==="; ls -R temp-build || true
+        echo "=== Cache size ==="; du -sh .scons-cache || true
