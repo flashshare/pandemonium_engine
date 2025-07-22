@@ -8,7 +8,6 @@ env:
   VITASDK_URL: https://github.com/vitasdk/autobuilds/releases/download/master-linux-v2.527
   VDPM_COMMIT: 426032a2fd05300cf9ef04e5f691f07f642c14cf
   VITA_PACKAGES_EXTRA_COMMIT: 6000b5630c3a7fc2fb368293dd35560bd2e72e0f
-  EUID: 1
 
 concurrency:
   group: ci-${{github.actor}}-${{github.ref}}-vita
@@ -23,15 +22,13 @@ jobs:
       - uses: actions/checkout@v4
         with: { submodules: recursive }
 
-      - name: Restore SCons cache
-        uses: ./.github/actions/godot-cache-restore
+      - uses: ./.github/actions/godot-cache-restore
         with: { cache-name: vita-template }
         continue-on-error: true
 
-      - name: Setup Python & SCons
-        uses: ./.github/actions/godot-deps
+      - uses: ./.github/actions/godot-deps    # Python & SCons
 
-      - name: Install system dependencies
+      - name: Install host build dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y \
@@ -51,19 +48,17 @@ jobs:
           export PATH=$VITASDK_DIR/bin:$PATH
           arm-vita-eabi-gcc --version
 
-      - name: Install VitaSDK packages (pinned, include PCRE2 headers)
+      - name: Install VitaSDK packages (pinned w/ PCRE2 headers)
         run: |
           export PATH=$VITASDK_DIR/bin:$PATH
-          # Pin VDPM to pre-SDL3 commit
           git clone https://github.com/vitasdk/vdpm
           cd vdpm
           git checkout $VDPM_COMMIT
           chmod +x vdpm
-          # Install core libs + PCRE2 (headers & runtime)
+          # Install runtime + development headers
           ./vdpm -f taihen libdl libogg libzstd libpcre2-32 pcre2 theora opus jpeg png z
           ./vdpm -f vita-rss-libdl
           cd ..
-          # Pin and install pvr_psp2
           git clone https://github.com/isage/vita-packages-extra
           cd vita-packages-extra
           git checkout $VITA_PACKAGES_EXTRA_COMMIT
@@ -98,13 +93,16 @@ jobs:
           arm-vita-eabi-strip -g vita_release_stripped
           vita-elf-create vita_release_stripped vita_release.velf
 
-      - name: Package PS Vita Template
+      - name: Package PS Vita template
         if: success()
         run: |
-          mkdir -p template_build/vita_release/module template_build/vita_release/sce_sys/livearea/contents
+          mkdir -p template_build/vita_release/module \
+                   template_build/vita_release/sce_sys/livearea/contents
           cp temp-build/vita_release.velf template_build/vita_release/
-          vita-make-fself temp-build/vita_release.velf template_build/vita_release/eboot.bin
-          find vita-packages-extra/pvr_psp2/dist -name '*.suprx' -exec cp {} template_build/vita_release/module/ \;
+          vita-make-fself temp-build/vita_release.velf \
+                          template_build/vita_release/eboot.bin
+          find vita-packages-extra/pvr_psp2/dist -name '*.suprx' \
+            -exec cp {} template_build/vita_release/module/ \;
           cat > template_build/vita_release/sce_sys/livearea/contents/template.xml << 'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <livearea style="a1" format-ver="01.00" content-rev="1">
@@ -112,7 +110,8 @@ jobs:
             <gate><startup-image>startup.png</startup-image></gate>
           </livearea>
           EOF
-          touch template_build/vita_release/sce_sys/param.sfo template_build/vita_release/sce_sys/icon0.png
+          touch template_build/vita_release/sce_sys/param.sfo \
+                template_build/vita_release/sce_sys/icon0.png
           cd template_build
           zip -r ../vita_release.zip vita_release
           zip -r ../vita-template.zip vita_release.zip
@@ -131,7 +130,7 @@ jobs:
       - name: Debug Info
         if: always()
         run: |
-          echo "=== Build Summary ==="
+          echo "=== Vita Build Summary ==="
           lsb_release -d
           arm-vita-eabi-gcc --version
           ls -la temp-build template_build
