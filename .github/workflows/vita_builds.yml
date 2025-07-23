@@ -18,24 +18,20 @@ jobs:
     name: Vita Template Build
 
     steps:
-      # 1. Checkout with submodules
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      # 2. Restore SCons cache
       - name: Restore SCons cache
         uses: ./.github/actions/godot-cache-restore
         with:
           cache-name: vita-template
         continue-on-error: true
 
-      # 3. Setup Python & SCons
       - name: Setup Python & SCons
         uses: ./.github/actions/godot-deps
 
-      # 4. Install system dependencies
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
@@ -45,28 +41,20 @@ jobs:
             libxinerama-dev libxrender-dev libxrandr-dev libgl1-mesa-dev libglu1-mesa-dev \
             git-core python3 make autoconf texinfo bison flex libtool
 
-      # 5. Install VitaSDK (fat build with all portlibs)
       - name: Install VitaSDK (Fat Build)
         run: |
-          # Remove any previous SDK
           sudo rm -rf $VITASDK_DIR
-          # Clone vdpm and pin to 2024 commit
           git clone https://github.com/vitasdk/vdpm
           cd vdpm
           git checkout $VDPM_COMMIT
-          # Export VITASDK for bootstrap & install scripts
           export VITASDK=$VITASDK_DIR
           echo "VITASDK=$VITASDK_DIR" >> $GITHUB_ENV
-          # Ensure vdpm scripts see the toolchain location
-          export PATH=$VITASDK/bin:$PATH
-          echo "$VITASDK/bin" >> $GITHUB_PATH
-          # Bootstrap & build the full SDK
+          echo "$VITASDK_DIR/bin" >> $GITHUB_PATH
+          export PATH=$VITASDK_DIR/bin:$PATH
           ./bootstrap-vitasdk.sh
           ./install-all.sh
-          # Verify installation
           arm-vita-eabi-gcc --version
 
-      # 6. Install vita-packages-extra (PVR_PSP2)
       - name: Install Vita Packages Extra
         run: |
           export PATH=$VITASDK_DIR/bin:$PATH
@@ -78,28 +66,24 @@ jobs:
           ../../vdpm/vdpm *-arm.tar.xz
           echo "✅ VitaSDK extra packages installed"
 
-      # 7. Prepare SCons cache
       - name: Prepare SCons cache
         run: |
           rm -rf .sconf_temp .scons-cache
           mkdir -p .sconf_temp .scons-cache
           chmod -R 777 .sconf_temp .scons-cache
 
-      # 8. Compile Godot for Vita
       - name: Compile Godot for Vita
         id: compilation
         run: |
           export PATH=$VITASDK_DIR/bin:$PATH
           export SCONS_CACHE_DIR="$GITHUB_WORKSPACE/.scons-cache"
-          echo "🔨 Building with external libraries"
+          echo "🔨 Building PS Vita export template (exceptions disabled)"
           if scons \
                platform=vita target=release tools=false \
                verbose=no warnings=no werror=no debug_symbols=no \
-               use_rtti=True disable_gles3=True \
+               use_rtti=True disable_gles3=True disable_exceptions=yes \
                cache_dir=$SCONS_CACHE_DIR \
-               builtin_zstd=no \
-               builtin_zlib=no \
-               builtin_pcre2=yes \
+               builtin_zstd=no builtin_zlib=no builtin_pcre2=yes \
                CC="arm-vita-eabi-gcc -marm -Wno-psabi" \
                CXX="arm-vita-eabi-g++ -marm -Wno-psabi" \
                LINK="arm-vita-eabi-g++ -marm -Wno-psabi" \
@@ -112,7 +96,6 @@ jobs:
             exit 1
           fi
 
-      # 9. Manual VELF Creation
       - name: Manual VELF Creation
         if: env.BUILD_RESULT == 'success'
         run: |
@@ -122,7 +105,6 @@ jobs:
           vita-elf-create vita_release_stripped vita_release.velf
           echo "✅ VELF created"
 
-      # 10. Package PS Vita template
       - name: Package Complete PS Vita Template
         if: env.BUILD_RESULT == 'success'
         run: |
@@ -145,14 +127,12 @@ jobs:
           zip -r vita-template.zip vita_release.zip
           echo "✅ Complete template: vita-template.zip"
 
-      # 11. Save build cache
       - name: Save Godot build cache
         uses: ./.github/actions/godot-cache-save
         with:
           cache-name: vita-template
         continue-on-error: true
 
-      # 12. Upload artifacts
       - name: Upload PSVita Template
         uses: actions/upload-artifact@v4
         with:
@@ -161,7 +141,6 @@ jobs:
             vita-template.zip
             vita_release.zip
 
-      # 13. Debug info
       - name: Debug Info
         if: always()
         run: |
