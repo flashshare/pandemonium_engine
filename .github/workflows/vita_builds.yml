@@ -41,7 +41,7 @@ jobs:
             libxinerama-dev libxrender-dev libxrandr-dev libgl1-mesa-dev libglu1-mesa-dev \
             git-core python3 make autoconf texinfo bison flex libtool
 
-      - name: Install VitaSDK (Fat Build)
+      - name: Install VitaSDK with GitHub Authentication
         run: |
           sudo rm -rf $VITASDK_DIR
           git clone https://github.com/vitasdk/vdpm
@@ -51,13 +51,49 @@ jobs:
           echo "VITASDK=$VITASDK_DIR" >> $GITHUB_ENV
           echo "$VITASDK_DIR/bin" >> $GITHUB_PATH
           export PATH=$VITASDK_DIR/bin:$PATH
-          ./bootstrap-vitasdk.sh
-          ./install-all.sh
+          
+          # Set GitHub token for authenticated API requests
+          export GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}"
+          git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+          
+          echo "🔧 Bootstrapping VitaSDK with GitHub authentication..."
+          # Retry mechanism for rate limiting
+          for i in {1..3}; do
+            if ./bootstrap-vitasdk.sh; then
+              echo "✅ Bootstrap completed successfully"
+              break
+            else
+              echo "⚠️  Bootstrap attempt $i failed, waiting 60 seconds before retry..."
+              sleep 60
+              if [ $i -eq 3 ]; then
+                echo "❌ Bootstrap failed after 3 attempts"
+                exit 1
+              fi
+            fi
+          done
+          
+          echo "📦 Installing ALL VitaSDK packages..."
+          # Retry mechanism for install-all as well
+          for i in {1..3}; do
+            if ./install-all.sh; then
+              echo "✅ All packages installed successfully"
+              break
+            else
+              echo "⚠️  Install attempt $i failed, waiting 120 seconds before retry..."
+              sleep 120
+              if [ $i -eq 3 ]; then
+                echo "❌ Package installation failed after 3 attempts"
+                exit 1
+              fi
+            fi
+          done
+          
           arm-vita-eabi-gcc --version
 
-      - name: Install Vita Packages Extra
+      - name: Install Vita Packages Extra (PVR_PSP2)
         run: |
           export PATH=$VITASDK_DIR/bin:$PATH
+          export GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}"
           git clone https://github.com/isage/vita-packages-extra
           cd vita-packages-extra
           git checkout $VITA_PACKAGES_EXTRA_COMMIT
