@@ -4,13 +4,12 @@ on: [push, pull_request]
 env:
   GODOT_BRANCH: 3.x
   VITASDK_DIR: /usr/local/vitasdk
-  # Use specific 2024 commits to avoid 2025 conflicts
   VDPM_COMMIT: 426032a2fd05300cf9ef04e5f691f07f642c14cf
   VITA_PACKAGES_EXTRA_COMMIT: 6000b5630c3a7fc2fb368293dd35560bd2e72e0f
   EUID: 1
 
 concurrency:
-  group: ci-${{github.actor}}-${{github.head_ref || github.run_number}}-${{github.ref}}-vita
+  group: ci-${{ github.actor }}-${{ github.head_ref || github.run_number }}-${{ github.ref }}-vita
   cancel-in-progress: true
 
 jobs:
@@ -19,17 +18,24 @@ jobs:
     name: Vita Template Build
 
     steps:
-      - uses: actions/checkout@v4
-        with: { submodules: recursive }
+      # Checkout with submodules
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
+      # Restore SCons cache
       - name: Restore SCons cache
         uses: ./.github/actions/godot-cache-restore
-        with: { cache-name: vita-template }
+        with:
+          cache-name: vita-template
         continue-on-error: true
 
+      # Setup Python & SCons
       - name: Setup Python & SCons
         uses: ./.github/actions/godot-deps
 
+      # Install system dependencies
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
@@ -39,61 +45,46 @@ jobs:
             libxinerama-dev libxrender-dev libxrandr-dev libgl1-mesa-dev libglu1-mesa-dev \
             git-core python3 make autoconf texinfo bison flex libtool
 
-      - name: Install VitaSDK (Fat Build with All Portlibs)
+      # Install VitaSDK (fat build with all portlibs)
+      - name: Install VitaSDK (Fat Build)
         run: |
-          # Remove any existing VitaSDK
           sudo rm -rf $VITASDK_DIR
-          
-          # Clone vdpm with specific 2024 commit
           git clone https://github.com/vitasdk/vdpm
           cd vdpm
           git checkout $VDPM_COMMIT
-          
-          # Use the full fat build installation
           ./bootstrap-vitasdk.sh
-          
-          # Set environment variables
+          ./install-all.sh
           echo "VITASDK=$VITASDK_DIR" >> $GITHUB_ENV
           echo "$VITASDK_DIR/bin" >> $GITHUB_PATH
-          export VITASDK=$VITASDK_DIR
           export PATH=$VITASDK_DIR/bin:$PATH
-          
-          # Install ALL packages (this creates the "fat" build with all portlibs)
-          ./install-all.sh
-          
-          # Verify installation
           arm-vita-eabi-gcc --version
-          
-          # Verify libzstd is available
-          ls -la $VITASDK_DIR/arm-vita-eabi/include/ | grep zstd || echo "zstd header not found"
-          ls -la $VITASDK_DIR/arm-vita-eabi/lib/ | grep zstd || echo "zstd lib not found"
 
-      - name: Install Vita Packages Extra (PVR_PSP2)
+      # Install vita-packages-extra (PVR_PSP2)
+      - name: Install Vita Packages Extra
         run: |
           export PATH=$VITASDK_DIR/bin:$PATH
-          cd ..
           git clone https://github.com/isage/vita-packages-extra
           cd vita-packages-extra
           git checkout $VITA_PACKAGES_EXTRA_COMMIT
           cd pvr_psp2
           vita-makepkg
-          ../vdpm/vdpm *-arm.tar.xz
-          echo "✅ VitaSDK packages extra installed"
+          ../../vdpm/vdpm *-arm.tar.xz
+          echo "✅ VitaSDK extra packages installed"
 
+      # Prepare SCons cache
       - name: Prepare SCons cache
         run: |
           rm -rf .sconf_temp .scons-cache
           mkdir -p .sconf_temp .scons-cache
           chmod -R 777 .sconf_temp .scons-cache
 
-      - name: Compile Godot for Vita (Using External Libraries)
+      # Compile Godot for Vita
+      - name: Compile Godot for Vita
         id: compilation
         run: |
           export PATH=$VITASDK_DIR/bin:$PATH
           export SCONS_CACHE_DIR="$GITHUB_WORKSPACE/.scons-cache"
-          echo "🔨 Building with external libraries (similar to old workflow)"
-          
-          # Since we have the fat build, we can use external libraries like your old workflow
+          echo "🔨 Building with external libraries"
           if scons \
                platform=vita target=release tools=false \
                verbose=no warnings=no werror=no debug_symbols=no \
@@ -114,6 +105,7 @@ jobs:
             exit 1
           fi
 
+      # Create VELF
       - name: Manual VELF Creation
         if: env.BUILD_RESULT == 'success'
         run: |
@@ -123,6 +115,7 @@ jobs:
           vita-elf-create vita_release_stripped vita_release.velf
           echo "✅ VELF created"
 
+      # Package PS Vita template
       - name: Package Complete PS Vita Template
         if: env.BUILD_RESULT == 'success'
         run: |
@@ -145,12 +138,14 @@ jobs:
           zip -r vita-template.zip vita_release.zip
           echo "✅ Complete template: vita-template.zip"
 
+      # Save build cache
       - name: Save Godot build cache
         uses: ./.github/actions/godot-cache-save
         with:
           cache-name: vita-template
         continue-on-error: true
 
+      # Upload artifacts
       - name: Upload PSVita Template
         uses: actions/upload-artifact@v4
         with:
@@ -159,6 +154,7 @@ jobs:
             vita-template.zip
             vita_release.zip
 
+      # Debug info
       - name: Debug Info
         if: always()
         run: |
@@ -167,7 +163,7 @@ jobs:
           arm-vita-eabi-gcc --version
           ls -la temp-build template_build
           du -sh .scons-cache || true
-          echo "=== VitaSDK Contents ==="
-          ls -la $VITASDK_DIR/arm-vita-eabi/lib/ | head -20
-          echo "=== Available Headers ==="
-          ls -la $VITASDK_DIR/arm-vita-eabi/include/ | head -20
+          echo "=== VitaSDK include ==="
+          ls -1 $VITASDK_DIR/arm-vita-eabi/include | head -20
+          echo "=== VitaSDK lib ==="
+          ls -1 $VITASDK_DIR/arm-vita-eabi/lib | head -20
