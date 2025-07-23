@@ -4,7 +4,6 @@ on: [push, pull_request]
 env:
   GODOT_BRANCH: 3.x
   VITASDK_DIR: /usr/local/vitasdk
-  # Pin vdpm and vita-packages-extra to 2024 SHAs to lock in the “fat” SDK
   VDPM_COMMIT: 426032a2fd05300cf9ef04e5f691f07f642c14cf
   VITA_PACKAGES_EXTRA_COMMIT: 6000b5630c3a7fc2fb368293dd35560bd2e72e0f
   EUID: 1
@@ -15,19 +14,21 @@ concurrency:
 
 jobs:
   vita-template:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     name: Vita Template Build
 
     steps:
-      # 1. Checkout code & submodules
+      # 1. Checkout with submodules
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
       # 2. Restore SCons cache
-      - name: Restore Godot build cache
+      - name: Restore SCons cache
         uses: ./.github/actions/godot-cache-restore
+        with:
+          cache-name: vita-template
         continue-on-error: true
 
       # 3. Setup Python & SCons
@@ -39,24 +40,31 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y \
-            cmake libarchive-tools fakeroot zip wget git-core \
-            python3 make autoconf texinfo bison flex libtool \
-            libelf-dev build-essential
+            cmake libarchive-tools fakeroot zip wget libelf-dev build-essential \
+            libxcursor-dev libx11-dev libxext-dev libxfixes-dev libxi-dev \
+            libxinerama-dev libxrender-dev libxrandr-dev libgl1-mesa-dev libglu1-mesa-dev \
+            git-core python3 make autoconf texinfo bison flex libtool
 
       # 5. Install VitaSDK (fat build with all portlibs)
       - name: Install VitaSDK (Fat Build)
         run: |
-          # Clean slate
+          # Remove any previous SDK
           sudo rm -rf $VITASDK_DIR
+          # Clone vdpm and pin to 2024 commit
           git clone https://github.com/vitasdk/vdpm
           cd vdpm
           git checkout $VDPM_COMMIT
-          ./bootstrap-vitasdk.sh        # builds & installs full SDK
-          ./install-all.sh              # pulls every portlib
+          # Export VITASDK for bootstrap & install scripts
+          export VITASDK=$VITASDK_DIR
           echo "VITASDK=$VITASDK_DIR" >> $GITHUB_ENV
-          echo "$VITASDK_DIR/bin" >> $GITHUB_PATH
-          export PATH=$VITASDK_DIR/bin:$PATH
-          arm-vita-eabi-gcc --version    # verify
+          # Ensure vdpm scripts see the toolchain location
+          export PATH=$VITASDK/bin:$PATH
+          echo "$VITASDK/bin" >> $GITHUB_PATH
+          # Bootstrap & build the full SDK
+          ./bootstrap-vitasdk.sh
+          ./install-all.sh
+          # Verify installation
+          arm-vita-eabi-gcc --version
 
       # 6. Install vita-packages-extra (PVR_PSP2)
       - name: Install Vita Packages Extra
@@ -68,7 +76,7 @@ jobs:
           cd pvr_psp2
           vita-makepkg
           ../../vdpm/vdpm *-arm.tar.xz
-          echo "✅ Extra packages installed"
+          echo "✅ VitaSDK extra packages installed"
 
       # 7. Prepare SCons cache
       - name: Prepare SCons cache
@@ -77,13 +85,13 @@ jobs:
           mkdir -p .sconf_temp .scons-cache
           chmod -R 777 .sconf_temp .scons-cache
 
-      # 8. Compile Godot for Vita (external libs)
+      # 8. Compile Godot for Vita
       - name: Compile Godot for Vita
         id: compilation
         run: |
           export PATH=$VITASDK_DIR/bin:$PATH
           export SCONS_CACHE_DIR="$GITHUB_WORKSPACE/.scons-cache"
-          echo "🔨 Building with external VitaSDK libraries"
+          echo "🔨 Building with external libraries"
           if scons \
                platform=vita target=release tools=false \
                verbose=no warnings=no werror=no debug_symbols=no \
@@ -135,7 +143,7 @@ jobs:
           zip -r ../vita_release.zip vita_release
           cd ..
           zip -r vita-template.zip vita_release.zip
-          echo "✅ Template packaged"
+          echo "✅ Complete template: vita-template.zip"
 
       # 11. Save build cache
       - name: Save Godot build cache
@@ -153,7 +161,7 @@ jobs:
             vita-template.zip
             vita_release.zip
 
-      # 13. Debug Information
+      # 13. Debug info
       - name: Debug Info
         if: always()
         run: |
@@ -162,7 +170,7 @@ jobs:
           arm-vita-eabi-gcc --version
           ls -la temp-build template_build
           du -sh .scons-cache || true
-          echo "=== SDK Includes ==="
+          echo "=== VitaSDK include ==="
           ls -1 $VITASDK_DIR/arm-vita-eabi/include | head -20
-          echo "=== SDK Libraries ==="
+          echo "=== VitaSDK lib ==="
           ls -1 $VITASDK_DIR/arm-vita-eabi/lib | head -20
