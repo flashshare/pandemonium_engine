@@ -23,9 +23,15 @@ jobs:
         uses: ./.github/actions/godot-cache-restore
         continue-on-error: true
 
-      - name: Install scons from pip
+      - name: Fix repository sources and install scons
         run: |
+          # Clean up any existing bullseye-backports references
+          sudo find /etc/apt -name "*.list*" -exec sed -i '/bullseye-backports/d' {} \; 2>/dev/null || true
+          # Add archive repository for bullseye-backports
+          echo "deb https://archive.debian.org/debian bullseye-backports main" | sudo tee /etc/apt/sources.list.d/bullseye-backports-archive.list
+          # Update package lists
           sudo apt-get update
+          # Install python3-pip and scons
           sudo apt-get -y install python3-pip
           sudo python3 -m pip install scons
 
