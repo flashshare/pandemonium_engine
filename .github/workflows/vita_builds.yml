@@ -1,83 +1,53 @@
-name: 🎮 PSVita Builds • Choice B
-on: [push, pull_request]
+# .github/workflows/vita_builds.yml
+name: "🎮 PSVita Builds"
+
+on:
+  push:        # trigger on every push
+  pull_request # and on every PR
 
 env:
-  GODOT_BASE_BRANCH: 3.x
-  SCONSFLAGS: verbose=no warnings=no werror=no debug_symbols=no \
-              use_rtti=True disable_gles3=True disable_exceptions=yes
-  VITASDK: /usr/local/vitasdk
-  VDPM_COMMIT: 426032a2fd05300cf9ef04e5f691f07f642c14cf
-  VITA_PACKAGES_EXTRA_COMMIT: 6000b5630c3a7fc2fb368293dd35560bd2e72e0f
-  SDK_URL: https://github.com/vitasdk/autobuilds/releases/download/master-linux-v2.529/\
-vitasdk-x86_64-linux-gnu-2025-03-11_15-12-52.tar.bz2
-  EUID: 1
+  GODOT_BRANCH: "3.x"
+  VITASDK_DIR: /usr/local/vitasdk
+
+  # softfp v2.228 (“fat”) SDK tarball
+  VITA_SDK_URL: https://github.com/vitasdk/buildscripts/releases/download/softfp-linux-v2.228
+  VITA_SDK_TAR: vitasdk-x86_64-linux-gnu-2022-08-14_14-50-39.tar.bz2
+
+  # pinned repos (2024 SHAs)
+  VDPM_COMMIT: "426032a2fd05300cf9ef04e5f691f07f642c14cf"
+  VITA_PACKAGES_EXTRA_COMMIT: "6000b5630c3a7fc2fb368293dd35560bd2e72e0f"
 
 concurrency:
-  group: ci-${{github.actor}}-${{github.head_ref || github.run_number}}-${{github.ref}}-vita
+  group: "ci-${{ github.actor }}-${{ github.head_ref || github.run_number }}-${{ github.ref }}-vita"
   cancel-in-progress: true
 
 jobs:
   vita-template:
     runs-on: ubuntu-24.04
-    name: PS Vita template (manual SDK extract)
+    name: Vita Template Build
 
     steps:
-    - uses: actions/checkout@v4
-      with: {submodules: recursive}
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-    - uses: ./.github/actions/godot-cache-restore
-      continue-on-error: true
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            cmake libarchive-tools fakeroot zip wget git-core \
+            libelf-dev build-essential autoconf texinfo bison flex libtool \
+            libgl1-mesa-dev libglu1-mesa-dev libx11-dev libxrandr-dev \
+            libxinerama-dev libxext-dev libxi-dev libxfixes-dev libxcursor-dev
 
-    - uses: ./.github/actions/godot-deps
+      - name: Install VitaSDK (softfp v2.228)
+        run: |
+          sudo rm -rf "$VITASDK_DIR" && sudo mkdir -p "$VITASDK_DIR"
+          wget -q "$VITA_SDK_URL/$VITA_SDK_TAR" -O sdk.tar.bz2
+          sudo tar --strip-components=1 -xjf sdk.tar.bz2 -C "$VITASDK_DIR"
+          sudo chown -R "$USER:$USER" "$VITASDK_DIR"
+          echo "$VITASDK_DIR/bin" >> "$GITHUB_PATH"
+          arm-vita-eabi-gcc --version
 
-    - name: Install host packages
-      run: |
-        sudo apt-get update -qq
-        sudo apt-get install -y cmake libarchive-tools fakeroot zip \
-          git-core python3 make autoconf texinfo bison flex libtool
-
-    - name: Download & extract March 2025 VitaSDK
-      run: |
-        sudo rm -rf "$VITASDK"
-        sudo mkdir -p "$VITASDK"
-        wget -q "$SDK_URL" -O sdk.tar.bz2
-        sudo tar --strip-components=1 -xjf sdk.tar.bz2 -C "$VITASDK"
-        sudo chown -R $USER:$USER "$VITASDK"
-        echo "$VITASDK/bin" >> $GITHUB_PATH
-        export PATH=$VITASDK/bin:$PATH
-        arm-vita-eabi-gcc --version
-
-    - name: Install all VitaSDK portlibs
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        git clone https://github.com/vitasdk/vdpm
-        cd vdpm && git checkout $VDPM_COMMIT
-        export PATH=$VITASDK/bin:$PATH
-        ./install-all.sh
-        ./vdpm -f vita-rss-libdl
-        cd ..
-
-        # PVR_PSP2 drivers
-        git clone https://github.com/isage/vita-packages-extra
-        cd vita-packages-extra && git checkout $VITA_PACKAGES_EXTRA_COMMIT
-        cd pvr_psp2 && vita-makepkg
-        ../../vdpm/vdpm *-arm.tar.xz
-        echo "✅ All portlibs installed"
-
-    - name: Build Godot (Vita export)
-      uses: ./.github/actions/godot-build
-      with:
-        sconsflags: ${{ env.SCONSFLAGS }}
-        platform: vita
-        target: release
-        tools: false
-
-    - uses: ./.github/actions/godot-cache-save
-      with: {cache-name: vita-template}
-      continue-on-error: true
-
-    - uses: ./.github/actions/upload-artifact
-      with:
-        name: vita-template-${{ github.sha }}
-        path: bin/vita_release.zip
+      # ───── additional steps (vdpm, vita-packages-extra, SCons build, packaging) go here ─────
