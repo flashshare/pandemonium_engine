@@ -1,191 +1,76 @@
-name: "🎮 PSVita Builds"
+name: 🎮 PSVita Builds• Choice A
 on: [push, pull_request]
 
 env:
-  GODOT_BRANCH: 3.x
-  VITASDK_DIR: /usr/local/vitasdk
+  GODOT_BASE_BRANCH: 3.x
+  SCONSFLAGS: verbose=no warnings=no werror=no debug_symbols=no \
+              use_rtti=True disable_gles3=True disable_exceptions=yes
+  VITASDK: /usr/local/vitasdk
   VDPM_COMMIT: 426032a2fd05300cf9ef04e5f691f07f642c14cf
   VITA_PACKAGES_EXTRA_COMMIT: 6000b5630c3a7fc2fb368293dd35560bd2e72e0f
+  SDK_URL: https://github.com/vitasdk/autobuilds/releases/download/master-linux-v2.529/\
+vitasdk-x86_64-linux-gnu-2025-03-11_15-12-52.tar.bz2     # pinned SDK
   EUID: 1
 
 concurrency:
-  group: ci-${{ github.actor }}-${{ github.head_ref || github.run_number }}-${{ github.ref }}-vita
+  group: ci-${{github.actor}}-${{github.head_ref || github.run_number}}-${{github.ref}}-vita
   cancel-in-progress: true
 
 jobs:
   vita-template:
-    runs-on: ubuntu-22.04
-    name: Vita Template Build
+    runs-on: ubuntu-24.04
+    name: PS Vita template (build-in-place)
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
+    - uses: actions/checkout@v4
+      with: {submodules: recursive}
 
-      - name: Restore SCons cache
-        uses: ./.github/actions/godot-cache-restore
-        with:
-          cache-name: vita-template
-        continue-on-error: true
+    - uses: ./.github/actions/godot-cache-restore
+      continue-on-error: true
 
-      - name: Setup Python & SCons
-        uses: ./.github/actions/godot-deps
+    - uses: ./.github/actions/godot-deps    # Python + SCons
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y \
-            cmake libarchive-tools fakeroot zip wget libelf-dev build-essential \
-            libxcursor-dev libx11-dev libxext-dev libxfixes-dev libxi-dev \
-            libxinerama-dev libxrender-dev libxrandr-dev libgl1-mesa-dev libglu1-mesa-dev \
-            git-core python3 make autoconf texinfo bison flex libtool
+    - name: Install host packages
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y cmake libarchive-tools fakeroot zip \
+          git-core python3 make autoconf texinfo bison flex libtool
 
-      - name: Install VitaSDK with GitHub Authentication
-        run: |
-          sudo rm -rf $VITASDK_DIR
-          git clone https://github.com/vitasdk/vdpm
-          cd vdpm
-          git checkout $VDPM_COMMIT
-          export VITASDK=$VITASDK_DIR
-          echo "VITASDK=$VITASDK_DIR" >> $GITHUB_ENV
-          echo "$VITASDK_DIR/bin" >> $GITHUB_PATH
-          export PATH=$VITASDK_DIR/bin:$PATH
-          
-          # Set GitHub token for authenticated API requests
-          export GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}"
-          git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
-          
-          echo "🔧 Bootstrapping VitaSDK with GitHub authentication..."
-          # Retry mechanism for rate limiting
-          for i in {1..3}; do
-            if ./bootstrap-vitasdk.sh; then
-              echo "✅ Bootstrap completed successfully"
-              break
-            else
-              echo "⚠️  Bootstrap attempt $i failed, waiting 60 seconds before retry..."
-              sleep 60
-              if [ $i -eq 3 ]; then
-                echo "❌ Bootstrap failed after 3 attempts"
-                exit 1
-              fi
-            fi
-          done
-          
-          echo "📦 Installing ALL VitaSDK packages..."
-          # Retry mechanism for install-all as well
-          for i in {1..3}; do
-            if ./install-all.sh; then
-              echo "✅ All packages installed successfully"
-              break
-            else
-              echo "⚠️  Install attempt $i failed, waiting 120 seconds before retry..."
-              sleep 120
-              if [ $i -eq 3 ]; then
-                echo "❌ Package installation failed after 3 attempts"
-                exit 1
-              fi
-            fi
-          done
-          
-          arm-vita-eabi-gcc --version
+    - name: Install VitaSDK (March 2025 + all portlibs)
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        sudo rm -rf "$VITASDK"
+        git clone https://github.com/vitasdk/vdpm
+        cd vdpm && git checkout $VDPM_COMMIT
 
-      - name: Install Vita Packages Extra (PVR_PSP2)
-        run: |
-          export PATH=$VITASDK_DIR/bin:$PATH
-          export GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}"
-          git clone https://github.com/isage/vita-packages-extra
-          cd vita-packages-extra
-          git checkout $VITA_PACKAGES_EXTRA_COMMIT
-          cd pvr_psp2
-          vita-makepkg
-          ../../vdpm/vdpm *-arm.tar.xz
-          echo "✅ VitaSDK extra packages installed"
+        # authenticated fetch prevents rate-limit and pins exact SDK
+        ./bootstrap-vitasdk.sh -u "$SDK_URL"
+        ./install-all.sh                        # taihen, zstd, etc.
 
-      - name: Prepare SCons cache
-        run: |
-          rm -rf .sconf_temp .scons-cache
-          mkdir -p .sconf_temp .scons-cache
-          chmod -R 777 .sconf_temp .scons-cache
+        export PATH=$VITASDK/bin:$PATH
+        ./vdpm -f vita-rss-libdl                # extra stub
+        cd ..
 
-      - name: Compile Godot for Vita
-        id: compilation
-        run: |
-          export PATH=$VITASDK_DIR/bin:$PATH
-          export SCONS_CACHE_DIR="$GITHUB_WORKSPACE/.scons-cache"
-          echo "🔨 Building PS Vita export template (exceptions disabled)"
-          if scons \
-               platform=vita target=release tools=false \
-               verbose=no warnings=no werror=no debug_symbols=no \
-               use_rtti=True disable_gles3=True disable_exceptions=yes \
-               cache_dir=$SCONS_CACHE_DIR \
-               builtin_zstd=no builtin_zlib=no builtin_pcre2=yes \
-               CC="arm-vita-eabi-gcc -marm -Wno-psabi" \
-               CXX="arm-vita-eabi-g++ -marm -Wno-psabi" \
-               LINK="arm-vita-eabi-g++ -marm -Wno-psabi" \
-               LINKFLAGS="-marm -mno-thumb-interwork"; then
-            echo "✅ Build succeeded"
-            echo "BUILD_RESULT=success" >> $GITHUB_ENV
-          else
-            echo "❌ Build failed"
-            echo "BUILD_RESULT=failed" >> $GITHUB_ENV
-            exit 1
-          fi
+        # PVR_PSP2 drivers
+        git clone https://github.com/isage/vita-packages-extra
+        cd vita-packages-extra && git checkout $VITA_PACKAGES_EXTRA_COMMIT
+        cd pvr_psp2 && vita-makepkg
+        ../../vdpm/vdpm *-arm.tar.xz
 
-      - name: Manual VELF Creation
-        if: env.BUILD_RESULT == 'success'
-        run: |
-          cd temp-build
-          cp godot.vita.opt.32 vita_release_stripped
-          arm-vita-eabi-strip -g vita_release_stripped
-          vita-elf-create vita_release_stripped vita_release.velf
-          echo "✅ VELF created"
+    - name: Build Godot (Vita export)
+      uses: ./.github/actions/godot-build
+      with:
+        sconsflags: ${{ env.SCONSFLAGS }}
+        platform: vita
+        target: release
+        tools: false
 
-      - name: Package Complete PS Vita Template
-        if: env.BUILD_RESULT == 'success'
-        run: |
-          mkdir -p template_build/vita_release/module template_build/vita_release/sce_sys/livearea/contents
-          cp temp-build/vita_release.velf template_build/vita_release/
-          vita-make-fself temp-build/vita_release.velf template_build/vita_release/eboot.bin
-          find vita-packages-extra/pvr_psp2/dist -name '*.suprx' \
-            -exec cp {} template_build/vita_release/module/ \;
-          cat > template_build/vita_release/sce_sys/livearea/contents/template.xml << 'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <livearea style="a1" format-ver="01.00" content-rev="1">
-            <livearea-background><image>bg0.png</image></livearea-background>
-            <gate><startup-image>startup.png</startup-image></gate>
-          </livearea>
-          EOF
-          touch template_build/vita_release/sce_sys/param.sfo template_build/vita_release/sce_sys/icon0.png
-          cd template_build
-          zip -r ../vita_release.zip vita_release
-          cd ..
-          zip -r vita-template.zip vita_release.zip
-          echo "✅ Complete template: vita-template.zip"
+    - uses: ./.github/actions/godot-cache-save
+      with: {cache-name: vita-template}
+      continue-on-error: true
 
-      - name: Save Godot build cache
-        uses: ./.github/actions/godot-cache-save
-        with:
-          cache-name: vita-template
-        continue-on-error: true
-
-      - name: Upload PSVita Template
-        uses: actions/upload-artifact@v4
-        with:
-          name: vita-template-${{ github.sha }}
-          path: |
-            vita-template.zip
-            vita_release.zip
-
-      - name: Debug Info
-        if: always()
-        run: |
-          echo "=== Vita Build Summary ==="
-          lsb_release -d
-          arm-vita-eabi-gcc --version
-          ls -la temp-build template_build
-          du -sh .scons-cache || true
-          echo "=== VitaSDK include ==="
-          ls -1 $VITASDK_DIR/arm-vita-eabi/include | head -20
-          echo "=== VitaSDK lib ==="
-          ls -1 $VITASDK_DIR/arm-vita-eabi/lib | head -20
+    - uses: ./.github/actions/upload-artifact
+      with:
+        name: vita-template-${{ github.sha }}
+        path: bin/vita_release.zip
