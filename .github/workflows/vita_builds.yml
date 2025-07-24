@@ -1,4 +1,4 @@
-name: 🎮 PSVita Builds• Choice A
+name: 🎮 PSVita Builds • Choice B
 on: [push, pull_request]
 
 env:
@@ -9,7 +9,7 @@ env:
   VDPM_COMMIT: 426032a2fd05300cf9ef04e5f691f07f642c14cf
   VITA_PACKAGES_EXTRA_COMMIT: 6000b5630c3a7fc2fb368293dd35560bd2e72e0f
   SDK_URL: https://github.com/vitasdk/autobuilds/releases/download/master-linux-v2.529/\
-vitasdk-x86_64-linux-gnu-2025-03-11_15-12-52.tar.bz2     # pinned SDK
+vitasdk-x86_64-linux-gnu-2025-03-11_15-12-52.tar.bz2
   EUID: 1
 
 concurrency:
@@ -19,7 +19,7 @@ concurrency:
 jobs:
   vita-template:
     runs-on: ubuntu-24.04
-    name: PS Vita template (build-in-place)
+    name: PS Vita template (manual SDK extract)
 
     steps:
     - uses: actions/checkout@v4
@@ -28,7 +28,7 @@ jobs:
     - uses: ./.github/actions/godot-cache-restore
       continue-on-error: true
 
-    - uses: ./.github/actions/godot-deps    # Python + SCons
+    - uses: ./.github/actions/godot-deps
 
     - name: Install host packages
       run: |
@@ -36,20 +36,26 @@ jobs:
         sudo apt-get install -y cmake libarchive-tools fakeroot zip \
           git-core python3 make autoconf texinfo bison flex libtool
 
-    - name: Install VitaSDK (March 2025 + all portlibs)
+    - name: Download & extract March 2025 VitaSDK
+      run: |
+        sudo rm -rf "$VITASDK"
+        sudo mkdir -p "$VITASDK"
+        wget -q "$SDK_URL" -O sdk.tar.bz2
+        sudo tar --strip-components=1 -xjf sdk.tar.bz2 -C "$VITASDK"
+        sudo chown -R $USER:$USER "$VITASDK"
+        echo "$VITASDK/bin" >> $GITHUB_PATH
+        export PATH=$VITASDK/bin:$PATH
+        arm-vita-eabi-gcc --version
+
+    - name: Install all VitaSDK portlibs
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        sudo rm -rf "$VITASDK"
         git clone https://github.com/vitasdk/vdpm
         cd vdpm && git checkout $VDPM_COMMIT
-
-        # authenticated fetch prevents rate-limit and pins exact SDK
-        ./bootstrap-vitasdk.sh -u "$SDK_URL"
-        ./install-all.sh                        # taihen, zstd, etc.
-
         export PATH=$VITASDK/bin:$PATH
-        ./vdpm -f vita-rss-libdl                # extra stub
+        ./install-all.sh
+        ./vdpm -f vita-rss-libdl
         cd ..
 
         # PVR_PSP2 drivers
@@ -57,6 +63,7 @@ jobs:
         cd vita-packages-extra && git checkout $VITA_PACKAGES_EXTRA_COMMIT
         cd pvr_psp2 && vita-makepkg
         ../../vdpm/vdpm *-arm.tar.xz
+        echo "✅ All portlibs installed"
 
     - name: Build Godot (Vita export)
       uses: ./.github/actions/godot-build
